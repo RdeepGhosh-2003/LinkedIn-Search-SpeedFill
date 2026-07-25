@@ -34,7 +34,7 @@
   "screening": [
     {
       "keywords": "javascript, python, react, node, programming, software engineer",
-      "answer": "Yes, 3+ years experience with software development and programming."
+      "answer": "Yes"
     },
     {
       "keywords": "relocate, relocation, willing to relocate",
@@ -55,13 +55,12 @@
   ],
   "settings": {
     "autoFillOnLoad": true,
-    "pauseOnUnmatchedFields": true,
-    "stepDelayMs": 500,
+    "pauseOnUnmatchedFields": false,
+    "stepDelayMs": 400,
     "autoSelectResume": true,
     "autoAdvanceStep": true,
     "autoSubmitApplication": true,
     "highlightFilledFields": true,
-    "autoQueueSearchJobs": false,
-    "maxJobsToApply": 10
+    "learnOnTheGo": true
   }
 }

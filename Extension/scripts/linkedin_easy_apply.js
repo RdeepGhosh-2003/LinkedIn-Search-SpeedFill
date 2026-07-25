@@ -1,6 +1,13 @@
 /**
- * LinkedIn SpeedFill – Easy Apply Modal Engine v1.2.1
- * Verified against live July 2026 LinkedIn Easy Apply DOM & Accessibility Tree
+ * LinkedIn SpeedFill – Auto-Apply & Learn-on-the-Go Engine v2.0.0
+ *
+ * Core Features:
+ *  1. Triggers instantly when user clicks "Easy Apply" button or modal opens
+ *  2. Auto-fills text inputs, dropdowns, radios, checkboxes, and resumes
+ *  3. Auto-advances through Next → Review → Submit steps
+ *  4. 🧠 "Learn on the Go": Automatically captures user's manual answers for
+ *     unfilled questions and saves them to the Q&A bank in storage!
+ *  5. Search pill script completely removed for clean focus on Easy Apply
  */
 
 (function () {
@@ -16,8 +23,7 @@
   let processingLock = false;
   let debounceTimer  = null;
 
-  // ─── Shadow DOM & Iframe Context Helpers ────────────────────────────────────
-
+  // ─── Searchable Contexts (Handles Iframe Isolation) ─────────────────────────
   function getSearchableContexts() {
     const contexts = [document];
     try {
@@ -92,24 +98,34 @@
     return null;
   }
 
-  // ─── Profile loading ────────────────────────────────────────────────────────
+  // ─── Profile Loading ────────────────────────────────────────────────────────
   function loadProfile(callback) {
-    if (typeof chrome === 'undefined' || !chrome.storage?.local) {
-      LOG('chrome.storage unavailable');
-      return;
-    }
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
     chrome.storage.local.get(['userProfile'], result => {
-      profile = result.userProfile || null;
-      if (profile) {
-        LOG('Profile loaded:', profile.personal?.fullName);
-      } else {
-        LOG('No profile found in storage');
-      }
+      profile = result.userProfile || getDefaultProfile();
+      LOG('Profile loaded:', profile.personal?.fullName || 'Default');
       if (callback) callback();
     });
   }
 
-  // ─── React-aware value setter ───────────────────────────────────────────────
+  function getDefaultProfile() {
+    return {
+      personal: { fullName: '', firstName: '', lastName: '', email: '', phone: '', city: '', state: '' },
+      work: {
+        currentRole: { jobTitle: '', company: '', yearsExperience: '', currentSalary: '' },
+        targetRole: { jobTitle: '', targetLocation: '', expectedSalary: '', noticePeriod: '' }
+      },
+      education: { degree: '', major: '', university: '', graduationYear: '' },
+      screening: [],
+      settings: {
+        autoFillOnLoad: true, pauseOnUnmatchedFields: false, stepDelayMs: 400,
+        autoSelectResume: true, autoAdvanceStep: true, autoSubmitApplication: true,
+        highlightFilledFields: true, learnOnTheGo: true
+      }
+    };
+  }
+
+  // ─── React-Aware Native Value Setter ─────────────────────────────────────────
   function setNativeValue(el, value) {
     try {
       const proto  = Object.getPrototypeOf(el);
@@ -128,16 +144,122 @@
     el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
   }
 
-  // ─── Fill text inputs ───────────────────────────────────────────────────────
+  // ─── 🧠 LEARN ON THE GO: Auto-Save Manual User Answers ──────────────────────
+  function learnFromUserAnswer(questionText, answerText) {
+    if (!profile || profile.settings?.learnOnTheGo === false) return;
+    if (!questionText || !answerText) return;
+
+    const cleanedQ = questionText.toLowerCase().replace(/[*:]/g, '').replace(/\s+/g, ' ').trim();
+    const cleanedA = String(answerText).trim();
+
+    if (!cleanedQ || !cleanedA) return;
+    if (cleanedA.toLowerCase() === 'select an option') return;
+
+    // Generate keywords from question
+    const words = cleanedQ.split(/\s+/).filter(w =>
+      w.length > 2 && !['are', 'you', 'how', 'many', 'the', 'what', 'for', 'with', 'your', 'have', 'does', 'do', 'please'].includes(w)
+    );
+    const keywords = words.slice(0, 5).join(', ');
+    if (!keywords) return;
+
+    if (!Array.isArray(profile.screening)) profile.screening = [];
+
+    // Check if item already exists
+    const existing = profile.screening.find(item => {
+      const kws = item.keywords.toLowerCase();
+      return words.some(w => kws.includes(w));
+    });
+
+    if (existing) {
+      if (existing.answer !== cleanedA) {
+        existing.answer = cleanedA;
+        LOG(`🧠 Learn-on-the-Go updated Q&A: "${existing.keywords}" → "${cleanedA}"`);
+      } else {
+        return; // already saved
+      }
+    } else {
+      profile.screening.push({ keywords, answer: cleanedA });
+      LOG(`🧠 Learn-on-the-Go learned new Q&A: "${keywords}" → "${cleanedA}"`);
+    }
+
+    // Persist to storage
+    chrome.storage.local.set({ userProfile: profile });
+
+    // Show on-screen toast notification
+    showSpeedFillToast(`🧠 Learned: "${keywords}" → "${cleanedA}"`);
+  }
+
+  function showSpeedFillToast(msg) {
+    let toast = document.getElementById('sf-learn-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'sf-learn-toast';
+      toast.style.cssText = `
+        position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;
+        background: #0a66c2; color: #fff; padding: 10px 16px; border-radius: 20px;
+        font-family: system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.3); transition: all 0.3s ease; pointer-events: none;
+      `;
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+    setTimeout(() => {
+      if (toast) {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+      }
+    }, 2800);
+  }
+
+  // ─── Attach Manual Answer Event Listeners for Learn-on-the-Go ──────────────
+  function attachLearnListeners(modal) {
+    if (modal.dataset.speedfillLearnAttached === 'true') return;
+    modal.dataset.speedfillLearnAttached = 'true';
+
+    modal.addEventListener('change', e => {
+      const target = e.target;
+      if (!target) return;
+
+      // Text input or textarea
+      if (target.matches('input[type="text"], input[type="number"], textarea')) {
+        const qText = window.SpeedFillMatcher?.getElementLabelText(target);
+        if (qText && target.value.trim()) {
+          learnFromUserAnswer(qText, target.value.trim());
+        }
+      }
+
+      // Select dropdown
+      if (target.matches('select')) {
+        const qText = window.SpeedFillMatcher?.getElementLabelText(target);
+        const selOption = target.options[target.selectedIndex];
+        if (qText && selOption && selOption.text.trim() && selOption.value !== 'Select an option') {
+          learnFromUserAnswer(qText, selOption.text.trim());
+        }
+      }
+
+      // Radio button
+      if (target.matches('input[type="radio"]')) {
+        const fieldset = target.closest('fieldset');
+        const legend   = fieldset?.querySelector('legend, .fb-form-element-label');
+        const qText    = legend?.textContent || fieldset?.textContent || '';
+        const radioLbl = Array.from(target.labels || [])[0]?.textContent || target.nextElementSibling?.textContent || target.value;
+        if (qText && radioLbl) {
+          learnFromUserAnswer(qText, radioLbl.trim());
+        }
+      }
+    }, true);
+  }
+
+  // ─── Form Filling Processors ────────────────────────────────────────────────
+
   function processInputs(modal) {
     let hasUnfilled = false;
-
     const inputs = queryShadowAll(modal,
       'input[type="text"], input[type="number"], input[type="email"], ' +
       'input[type="tel"], input:not([type]), textarea'
     );
-
-    LOG(`Found ${inputs.length} inputs in modal`);
 
     for (const input of inputs) {
       if (input.dataset.speedfillUserEdited === 'true') continue;
@@ -153,22 +275,18 @@
         input.dataset.speedfillFilled = 'true';
         LOG(`Filled input "${match.keyMatched}" → "${match.value}"`);
       } else {
-        const isRequired = input.required ||
-                           input.getAttribute('aria-required') === 'true';
+        const isRequired = input.required || input.getAttribute('aria-required') === 'true';
         if (isRequired) {
           input.classList.add('speedfill-warning');
           hasUnfilled = true;
-          LOG(`Required input unmatched:`, input.id || input.name || input.placeholder || input.getAttribute('aria-label'));
         }
       }
     }
     return hasUnfilled;
   }
 
-  // ─── Fill select dropdowns ──────────────────────────────────────────────────
   function processDropdowns(modal) {
     const selects = queryShadowAll(modal, 'select');
-    LOG(`Found ${selects.length} dropdown selects in modal`);
 
     for (const select of selects) {
       if (select.disabled) continue;
@@ -181,7 +299,6 @@
       const targetVal = match.value.toLowerCase().trim();
       const options = Array.from(select.options);
 
-      // Find matching option ignoring extra padding whitespace
       const target = options.find(o => {
         const txt = o.text.toLowerCase().trim();
         const val = o.value.toLowerCase().trim();
@@ -196,12 +313,9 @@
     }
   }
 
-  // ─── Answer radio groups ────────────────────────────────────────────────────
   function processRadioGroups(modal) {
     let hasUnfilled = false;
     const fieldsets = queryShadowAll(modal, 'fieldset');
-
-    LOG(`Found ${fieldsets.length} fieldsets`);
 
     for (const fieldset of fieldsets) {
       const radios = Array.from(fieldset.querySelectorAll('input[type="radio"]'));
@@ -212,7 +326,7 @@
       const legendText = (legendEl?.textContent || fieldset.textContent || '').toLowerCase().slice(0, 200);
       let targetValue  = null;
 
-      // Q&A bank
+      // Q&A bank match
       if (Array.isArray(profile?.screening)) {
         for (const item of profile.screening) {
           if (!item.keywords) continue;
@@ -249,13 +363,11 @@
           picked.click();
           picked.dispatchEvent(new Event('change', { bubbles: true }));
           fieldset.classList.add('speedfill-highlight');
-          LOG(`Radio answered: "${legendText.slice(0,40)}" → "${targetValue}"`);
+          LOG(`Radio answered: "${legendText.slice(0,35)}" → "${targetValue}"`);
         } else {
-          LOG(`Radio no option match for "${targetValue}"`);
           hasUnfilled = true;
         }
       } else {
-        LOG(`Radio unmatched (no fallback): "${legendText.slice(0,40)}"`);
         const hasRequired = fieldset.querySelector('[aria-required="true"]');
         if (hasRequired) hasUnfilled = true;
       }
@@ -263,7 +375,21 @@
     return hasUnfilled;
   }
 
-  // ─── Auto-select resume ─────────────────────────────────────────────────────
+  function processCheckboxes(modal) {
+    // Auto-check terms / agreement checkboxes if required
+    const checkboxes = queryShadowAll(modal, 'input[type="checkbox"]:not(:checked)');
+    checkboxes.forEach(cb => {
+      const isRequired = cb.required || cb.getAttribute('aria-required') === 'true';
+      const labelText  = (cb.labels?.[0]?.textContent || cb.closest('label')?.textContent || '').toLowerCase();
+      if (isRequired || /agree|terms|consent|certify|acknowledge/.test(labelText)) {
+        cb.click();
+        cb.checked = true;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+        LOG('Agreement checkbox auto-checked');
+      }
+    });
+  }
+
   function processResumeStep(modal) {
     if (!profile?.settings?.autoSelectResume) return;
 
@@ -280,7 +406,7 @@
       if (radioCards.length > 0) {
         radioCards[0].click();
         radioCards[0].dispatchEvent(new Event('change', { bubbles: true }));
-        LOG('Resume selected via radio card');
+        LOG('Resume selected');
         return;
       }
     }
@@ -291,7 +417,7 @@
     if (useBtn) { useBtn.click(); LOG('Resume button clicked'); }
   }
 
-  // ─── Find Next / Review / Submit button ─────────────────────────────────────
+  // ─── Find Action Button (Next / Review / Submit) ───────────────────────────
   function findActionButton(modal) {
     const doc = modal.ownerDocument || document;
 
@@ -311,7 +437,7 @@
       const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
       const text      = (btn.textContent || '').toLowerCase().trim();
 
-      // EXCLUDE Dismiss / Close button
+      // Exclude close/dismiss button
       if (ariaLabel === 'dismiss' || ariaLabel.includes('close modal') || text === 'dismiss') continue;
 
       if (ariaLabel.includes('submit application') || ariaLabel.includes('submit your application') || text === 'submit application') {
@@ -332,7 +458,7 @@
     return { submitBtn, reviewBtn, nextBtn };
   }
 
-  // ─── Advance step ───────────────────────────────────────────────────────────
+  // ─── Step Navigator & Auto-Advancement ──────────────────────────────────────
   function advanceNextStep(modal) {
     if (!modal?.isConnected) return;
 
@@ -340,8 +466,8 @@
 
     LOG(`Action buttons found — submit:${!!submitBtn} review:${!!reviewBtn} next:${!!nextBtn}`);
 
-    if (submitBtn && profile?.settings?.autoSubmitApplication) {
-      LOG('Clicking Submit button');
+    if (submitBtn && profile?.settings?.autoSubmitApplication !== false) {
+      LOG('🚀 Submitting application');
       submitBtn.click();
       logApplicationSubmit();
       window.postMessage({ type: 'SPEEDFILL_APPLICATION_SUBMITTED' }, '*');
@@ -350,17 +476,17 @@
           'button[aria-label="Dismiss"], .artdeco-modal__dismiss, button[data-test-modal-close-btn]'
         );
         if (dismiss) dismiss.click();
-      }, 1500);
+      }, 1200);
       return;
     }
 
-    if (reviewBtn) { LOG('Clicking Review button'); reviewBtn.click(); return; }
-    if (nextBtn)   { LOG('Clicking Next button');   nextBtn.click();   return; }
+    if (reviewBtn) { LOG('Clicking Review step'); reviewBtn.click(); return; }
+    if (nextBtn)   { LOG('Clicking Next step');   nextBtn.click();   return; }
 
-    LOG('No action button found to click');
+    LOG('No action button to click on this step');
   }
 
-  // ─── Application log ────────────────────────────────────────────────────────
+  // ─── Application Logging ────────────────────────────────────────────────────
   function logApplicationSubmit() {
     const jobTitle = document.querySelector(
       '.jobs-easy-apply-modal h2, .t-24, .jobs-unified-top-card__job-title'
@@ -376,7 +502,7 @@
     });
   }
 
-  // ─── Main step processor ────────────────────────────────────────────────────
+  // ─── Main Step Processor ────────────────────────────────────────────────────
   function getModalHash(modal) {
     try {
       const els = Array.from(modal.querySelectorAll('input, select, textarea, fieldset, button'));
@@ -394,7 +520,8 @@
     const modal = findEasyApplyModal();
     if (!modal) return;
 
-    LOG('Easy Apply modal active in document context');
+    // Attach Learn-on-the-Go manual input listeners
+    attachLearnListeners(modal);
 
     const hash = getModalHash(modal);
     if (hash === lastModalHash) return;
@@ -405,24 +532,49 @@
       const missingInputs = processInputs(modal);
       const missingRadios = processRadioGroups(modal);
       processDropdowns(modal);
+      processCheckboxes(modal);
       processResumeStep(modal);
 
       const hasMissing = missingInputs || missingRadios;
-      LOG(`Step processed — unmatched fields remaining: ${hasMissing}`);
 
       if (hasMissing && profile?.settings?.pauseOnUnmatchedFields) {
+        LOG('Pausing due to missing required fields (pauseOnUnmatchedFields is enabled)');
         window.postMessage({ type: 'SPEEDFILL_REVIEW_NEEDED' }, '*');
         return;
       }
 
-      if (profile?.settings?.autoAdvanceStep) {
-        const delay = Math.max(0, profile.settings.stepDelayMs ?? 600);
+      if (profile?.settings?.autoAdvanceStep !== false) {
+        const delay = Math.max(0, profile.settings?.stepDelayMs ?? 400);
         clearTimeout(stepTimer);
         stepTimer = setTimeout(() => advanceNextStep(modal), delay);
       }
     } finally {
       processingLock = false;
     }
+  }
+
+  // ─── Global Easy Apply Click Interceptor ───────────────────────────────────
+  function attachEasyApplyClickListener() {
+    document.addEventListener('click', e => {
+      const target = e.target;
+      if (!target) return;
+
+      const isEasyApply = (
+        target.textContent?.includes('Easy Apply') ||
+        target.getAttribute('aria-label')?.includes('Easy Apply') ||
+        target.closest('.jobs-apply-button') ||
+        target.closest('[data-job-apply-button]')
+      );
+
+      if (isEasyApply) {
+        LOG('User clicked Easy Apply button — initializing instant fill loop');
+        lastModalHash = '';
+        // Poll for modal opening
+        [150, 400, 800, 1200, 1800].forEach(delay => {
+          setTimeout(processModalStep, delay);
+        });
+      }
+    }, true);
   }
 
   // ─── MutationObserver ───────────────────────────────────────────────────────
@@ -435,25 +587,24 @@
         if (!profile?.settings?.autoFillOnLoad) return;
         const modal = findEasyApplyModal();
         if (modal) processModalStep();
-      }, 350);
+      }, 300);
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
-    LOG('SpeedFill Observer active');
   }
 
-  // ─── Manual-edit lock ────────────────────────────────────────────────────────
+  // ─── Manual-Edit Lock ────────────────────────────────────────────────────────
   document.addEventListener('input', e => {
     if (e.target?.matches?.('input, textarea')) {
       e.target.dataset.speedfillUserEdited = 'true';
     }
   }, true);
 
-  // ─── Message listener (Alt+F hotkey) ────────────────────────────────────────
+  // ─── Message Listener (Alt+F Hotkey) ────────────────────────────────────────
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'TRIGGER_AUTOFILL') {
-        LOG('Autofill manually triggered');
+        LOG('Autofill manually triggered via Alt+F');
         lastModalHash = '';
         if (profile) {
           processModalStep();
@@ -468,7 +619,8 @@
 
   // ─── Boot ──────────────────────────────────────────────────────────────────
   function init() {
-    LOG('SpeedFill Easy Apply Engine v1.2.1 initialized on frame:', location.href);
+    LOG('SpeedFill Auto-Apply Engine v2.0.0 initialized');
+    attachEasyApplyClickListener();
     loadProfile(() => startObserver());
   }
 

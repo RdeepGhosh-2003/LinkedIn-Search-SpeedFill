@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn SpeedFill Auto-Apply Engine",
-  "version": "1.2.1",
-  "description": "Sub-10ms auto-filler and search auto-apply assistant for LinkedIn Easy Apply jobs in Chrome & Brave.",
+  "version": "2.0.0",
+  "description": "Instant auto-fill, step navigator, and Learn-on-the-Go engine for LinkedIn Easy Apply.",
   "permissions": [
     "storage",
     "activeTab",
@@ -33,7 +33,6 @@
       "all_frames": true,
       "js": [
         "scripts/matcher.js",
-        "scripts/linkedin_search.js",
         "scripts/linkedin_easy_apply.js"
       ],
       "css": [

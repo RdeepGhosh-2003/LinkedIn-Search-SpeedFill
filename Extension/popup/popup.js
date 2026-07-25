@@ -100,6 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setCheck('autoAdvanceStep',        p.settings?.autoAdvanceStep);
     setCheck('autoSubmitApplication',  p.settings?.autoSubmitApplication);
     setCheck('highlightFilledFields',  p.settings?.highlightFilledFields);
+    setCheck('learnOnTheGo',           p.settings?.learnOnTheGo ?? true);
 
     const delay = p.settings?.stepDelayMs ?? 600;
     stepDelayInput.value = delay;
@@ -204,7 +205,8 @@ document.addEventListener('DOMContentLoaded', () => {
         autoSelectResume:       getCheck('autoSelectResume'),
         autoAdvanceStep:        getCheck('autoAdvanceStep'),
         autoSubmitApplication:  getCheck('autoSubmitApplication'),
-        highlightFilledFields:  getCheck('highlightFilledFields')
+        highlightFilledFields:  getCheck('highlightFilledFields'),
+        learnOnTheGo:           getCheck('learnOnTheGo')
       }
     };
 
