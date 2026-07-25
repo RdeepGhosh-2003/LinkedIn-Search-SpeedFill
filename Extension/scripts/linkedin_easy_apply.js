@@ -1,13 +1,6 @@
 /**
- * LinkedIn SpeedFill – Auto-Apply & Learn-on-the-Go Engine v2.0.0
- *
- * Core Features:
- *  1. Triggers instantly when user clicks "Easy Apply" button or modal opens
- *  2. Auto-fills text inputs, dropdowns, radios, checkboxes, and resumes
- *  3. Auto-advances through Next → Review → Submit steps
- *  4. 🧠 "Learn on the Go": Automatically captures user's manual answers for
- *     unfilled questions and saves them to the Q&A bank in storage!
- *  5. Search pill script completely removed for clean focus on Easy Apply
+ * LinkedIn SpeedFill – Auto-Fill & Step Navigator Engine v2.1.0
+ * Architecture aligned 100% with the ultra-fast Indeed SpeedFill engine.
  */
 
 (function () {
@@ -15,157 +8,221 @@
 
   const LOG = (...args) => console.log('[SpeedFill]', ...args);
 
-  // ─── State ─────────────────────────────────────────────────────────────────
-  let profile        = null;
-  let observer       = null;
-  let stepTimer      = null;
-  let lastModalHash  = '';
-  let processingLock = false;
-  let debounceTimer  = null;
+  let userProfile        = null;
+  let isObserverActive   = false;
+  let stepTimer          = null;
+  let autoLoopInterval   = null;
 
-  // ─── Searchable Contexts (Handles Iframe Isolation) ─────────────────────────
-  function getSearchableContexts() {
-    const contexts = [document];
-    try {
-      const iframes = document.querySelectorAll('iframe');
-      iframes.forEach(iframe => {
-        try {
-          if (iframe.contentDocument && iframe.contentDocument.body) {
-            contexts.push(iframe.contentDocument);
-          }
-        } catch(e) {}
-      });
-    } catch(e) {}
-    return contexts;
-  }
-
-  function queryShadowAll(root, selector) {
-    const results = [];
-    try {
-      results.push(...Array.from(root.querySelectorAll(selector)));
-    } catch(e) {}
-
-    const allEls = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
-    for (const el of allEls) {
-      if (el.shadowRoot) {
-        results.push(...queryShadowAll(el.shadowRoot, selector));
-      }
-    }
-    return results;
-  }
-
-  function queryShadowFirst(root, selector) {
-    return queryShadowAll(root, selector)[0] || null;
-  }
-
-  // ─── Modal Detection ────────────────────────────────────────────────────────
-  function findEasyApplyModal() {
-    const contexts = getSearchableContexts();
-
-    for (const ctx of contexts) {
-      // Strategy 1: class-based
-      const byClass = ctx.querySelector('.jobs-easy-apply-modal');
-      if (byClass) return byClass;
-
-      // Strategy 2: role="dialog" or artdeco-modal with Easy Apply title/aria-label
-      const allModals = ctx.querySelectorAll(
-        'div[role="dialog"], .artdeco-modal, [data-test-modal]'
-      );
-
-      for (const modal of allModals) {
-        const ariaLabel = (modal.getAttribute('aria-label') || '').toLowerCase();
-        if (ariaLabel.includes('easy apply') || ariaLabel.includes('apply to')) {
-          return modal;
-        }
-        const heading = modal.querySelector('h1, h2, h3, h4, [class*="title"]');
-        if (heading?.textContent?.toLowerCase().includes('easy apply') ||
-            heading?.textContent?.toLowerCase().includes('apply to')) {
-          return modal;
-        }
-      }
-
-      // Strategy 3: footer presence
-      const footers = ctx.querySelectorAll('.jobs-easy-apply-footer, [class*="easy-apply-footer"]');
-      if (footers.length > 0) {
-        return footers[0].closest('div[role="dialog"], .artdeco-modal') || footers[0].parentElement;
-      }
-
-      // Strategy 4: Shadow DOM search
-      const shadowModal = queryShadowFirst(ctx.body || ctx, '.jobs-easy-apply-modal');
-      if (shadowModal) return shadowModal;
-    }
-
-    return null;
-  }
-
-  // ─── Profile Loading ────────────────────────────────────────────────────────
+  // ─── Profile Loading & Storage Watcher ──────────────────────────────────────
   function loadProfile(callback) {
     if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
     chrome.storage.local.get(['userProfile'], result => {
-      profile = result.userProfile || getDefaultProfile();
-      LOG('Profile loaded:', profile.personal?.fullName || 'Default');
+      if (result && result.userProfile) {
+        userProfile = result.userProfile;
+        LOG('User profile loaded:', userProfile.personal?.fullName || 'Active');
+      } else {
+        fetch(chrome.runtime.getURL('data/default_profile.json'))
+          .then(res => res.json())
+          .then(data => {
+            userProfile = data;
+            chrome.storage.local.set({ userProfile: data });
+          })
+          .catch(err => console.error('[SpeedFill] Error loading default profile:', err));
+      }
       if (callback) callback();
     });
   }
 
-  function getDefaultProfile() {
-    return {
-      personal: { fullName: '', firstName: '', lastName: '', email: '', phone: '', city: '', state: '' },
-      work: {
-        currentRole: { jobTitle: '', company: '', yearsExperience: '', currentSalary: '' },
-        targetRole: { jobTitle: '', targetLocation: '', expectedSalary: '', noticePeriod: '' }
-      },
-      education: { degree: '', major: '', university: '', graduationYear: '' },
-      screening: [],
-      settings: {
-        autoFillOnLoad: true, pauseOnUnmatchedFields: false, stepDelayMs: 400,
-        autoSelectResume: true, autoAdvanceStep: true, autoSubmitApplication: true,
-        highlightFilledFields: true, learnOnTheGo: true
+  // Real-time sync when user updates profile in popup
+  if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+      if (namespace === 'local' && changes.userProfile) {
+        userProfile = changes.userProfile.newValue;
+        LOG('Profile updated in real-time');
       }
-    };
+    });
   }
 
-  // ─── React-Aware Native Value Setter ─────────────────────────────────────────
-  function setNativeValue(el, value) {
+  // ─── Native Event Dispatchers (React state update) ──────────────────────────
+  function setReactInputValue(el, value) {
+    if (!el || value === undefined || value === null) return false;
+    if (el.disabled || el.readOnly || el.dataset.speedfillUserEdited === 'true') return false;
+
+    const valStr = String(value);
+    if (el.value === valStr) return false;
+
     try {
-      const proto  = Object.getPrototypeOf(el);
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set ||
-                     Object.getOwnPropertyDescriptor(el, 'value')?.set;
+      const isTextArea = el.tagName.toLowerCase() === 'textarea';
+      const proto = isTextArea ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+
       if (setter) {
-        setter.call(el, value);
+        setter.call(el, valStr);
       } else {
-        el.value = value;
+        el.value = valStr;
       }
     } catch(e) {
-      el.value = value;
+      el.value = valStr;
     }
+
     el.dispatchEvent(new Event('input',  { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+
+    if (userProfile?.settings?.highlightFilledFields !== false) {
+      el.classList.add('speedfill-highlight');
+    }
+
+    return true;
   }
 
-  // ─── 🧠 LEARN ON THE GO: Auto-Save Manual User Answers ──────────────────────
+  function setSelectValue(selectEl, value) {
+    if (!selectEl || !value || selectEl.disabled || selectEl.dataset.speedfillUserEdited === 'true') return false;
+
+    const targetVal = String(value).toLowerCase().trim();
+    let matchedOption = null;
+
+    for (const option of selectEl.options) {
+      const optText = option.textContent.toLowerCase().trim();
+      const optVal  = option.value.toLowerCase().trim();
+      if (optText.includes(targetVal) || optVal.includes(targetVal) || targetVal.includes(optText)) {
+        matchedOption = option;
+        break;
+      }
+    }
+
+    if (matchedOption) {
+      selectEl.value = matchedOption.value;
+      selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      selectEl.dispatchEvent(new Event('blur',   { bubbles: true }));
+      if (userProfile?.settings?.highlightFilledFields !== false) {
+        selectEl.classList.add('speedfill-highlight');
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // ─── Smart Radio & Screening Question Handler ──────────────────────────────
+  function handleRadioGroups() {
+    if (!userProfile) return 0;
+
+    let filledCount = 0;
+    const containers = document.querySelectorAll('fieldset, [role="radiogroup"], .fb-dash-form-element, [class*="form-element"]');
+
+    containers.forEach(container => {
+      const radioInputs = Array.from(container.querySelectorAll('input[type="radio"]'));
+      if (radioInputs.length === 0) return;
+
+      // Skip if already selected
+      if (radioInputs.some(r => r.checked)) return;
+
+      const headerEl = container.querySelector('legend, h1, h2, h3, h4, label, [class*="label"], span.t-14');
+      const questionText = headerEl ? headerEl.textContent.toLowerCase().trim() : container.textContent.toLowerCase().trim();
+
+      let targetValue = null;
+
+      // Q&A Bank
+      if (userProfile.screening && Array.isArray(userProfile.screening)) {
+        for (const item of userProfile.screening) {
+          if (!item.keywords) continue;
+          const kws = item.keywords.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
+          if (kws.some(kw => questionText.includes(kw))) {
+            targetValue = item.answer.toLowerCase();
+            break;
+          }
+        }
+      }
+
+      // Fallbacks for common screening questions
+      if (!targetValue) {
+        if (/authoriz|legally eligible|right to work|work permit/.test(questionText)) targetValue = 'yes';
+        else if (/require.*sponsor|need.*visa|visa sponsor/.test(questionText))       targetValue = 'no';
+        else if (/relocat/.test(questionText))                                        targetValue = 'yes';
+        else if (/hybrid|remote|on.?site|in.?person/.test(questionText))              targetValue = 'yes';
+        else if (/currently.*work|still.*employ/.test(questionText))                  targetValue = 'yes';
+        else if (/years of experience|experience/.test(questionText))                 targetValue = 'yes';
+      }
+
+      if (targetValue) {
+        const targetRadio = radioInputs.find(r => {
+          const lbl = (
+            Array.from(r.labels || [])[0]?.textContent ||
+            r.closest('label')?.textContent ||
+            r.nextElementSibling?.textContent ||
+            r.getAttribute('aria-label') ||
+            r.value || ''
+          ).toLowerCase();
+          return lbl.includes(targetValue);
+        });
+
+        if (targetRadio) {
+          targetRadio.click();
+          targetRadio.dispatchEvent(new Event('change', { bubbles: true }));
+          filledCount++;
+        }
+      }
+    });
+
+    return filledCount;
+  }
+
+  // ─── Auto-Select Resume ─────────────────────────────────────────────────────
+  function handleResumeStep() {
+    const resumeCards = Array.from(document.querySelectorAll(
+      '.jobs-resume-picker input[type="radio"]:not(:checked), ' +
+      '[data-test-resume-card] input[type="radio"]:not(:checked), ' +
+      'input[name="resume"]:not(:checked)'
+    ));
+
+    if (resumeCards.length > 0) {
+      resumeCards[0].click();
+      resumeCards[0].dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+
+    const useBtn = document.querySelector('button[aria-label*="Use"], button[aria-label*="Select resume"]');
+    if (useBtn) {
+      useBtn.click();
+      return true;
+    }
+
+    return false;
+  }
+
+  // ─── Auto-Check Agreement Checkboxes ────────────────────────────────────────
+  function handleCheckboxes() {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]:not(:checked)');
+    checkboxes.forEach(cb => {
+      const isRequired = cb.required || cb.getAttribute('aria-required') === 'true';
+      const labelText  = (cb.labels?.[0]?.textContent || cb.closest('label')?.textContent || '').toLowerCase();
+      if (isRequired || /agree|terms|consent|certify|acknowledge/.test(labelText)) {
+        cb.click();
+        cb.checked = true;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+  }
+
+  // ─── 🧠 LEARN ON THE GO ────────────────────────────────────────────────────
   function learnFromUserAnswer(questionText, answerText) {
-    if (!profile || profile.settings?.learnOnTheGo === false) return;
+    if (!userProfile || userProfile.settings?.learnOnTheGo === false) return;
     if (!questionText || !answerText) return;
 
     const cleanedQ = questionText.toLowerCase().replace(/[*:]/g, '').replace(/\s+/g, ' ').trim();
     const cleanedA = String(answerText).trim();
 
-    if (!cleanedQ || !cleanedA) return;
-    if (cleanedA.toLowerCase() === 'select an option') return;
+    if (!cleanedQ || !cleanedA || cleanedA.toLowerCase() === 'select an option') return;
 
-    // Generate keywords from question
     const words = cleanedQ.split(/\s+/).filter(w =>
       w.length > 2 && !['are', 'you', 'how', 'many', 'the', 'what', 'for', 'with', 'your', 'have', 'does', 'do', 'please'].includes(w)
     );
     const keywords = words.slice(0, 5).join(', ');
     if (!keywords) return;
 
-    if (!Array.isArray(profile.screening)) profile.screening = [];
+    if (!Array.isArray(userProfile.screening)) userProfile.screening = [];
 
-    // Check if item already exists
-    const existing = profile.screening.find(item => {
+    const existing = userProfile.screening.find(item => {
       const kws = item.keywords.toLowerCase();
       return words.some(w => kws.includes(w));
     });
@@ -173,23 +230,20 @@
     if (existing) {
       if (existing.answer !== cleanedA) {
         existing.answer = cleanedA;
-        LOG(`🧠 Learn-on-the-Go updated Q&A: "${existing.keywords}" → "${cleanedA}"`);
+        LOG(`🧠 Learned update: "${existing.keywords}" → "${cleanedA}"`);
       } else {
-        return; // already saved
+        return;
       }
     } else {
-      profile.screening.push({ keywords, answer: cleanedA });
-      LOG(`🧠 Learn-on-the-Go learned new Q&A: "${keywords}" → "${cleanedA}"`);
+      userProfile.screening.push({ keywords, answer: cleanedA });
+      LOG(`🧠 Learned new Q&A: "${keywords}" → "${cleanedA}"`);
     }
 
-    // Persist to storage
-    chrome.storage.local.set({ userProfile: profile });
-
-    // Show on-screen toast notification
-    showSpeedFillToast(`🧠 Learned: "${keywords}" → "${cleanedA}"`);
+    chrome.storage.local.set({ userProfile });
+    showLearnToast(`🧠 Learned: "${keywords}" → "${cleanedA}"`);
   }
 
-  function showSpeedFillToast(msg) {
+  function showLearnToast(msg) {
     let toast = document.getElementById('sf-learn-toast');
     if (!toast) {
       toast = document.createElement('div');
@@ -204,296 +258,111 @@
     }
     toast.textContent = msg;
     toast.style.opacity = '1';
-    toast.style.transform = 'translateY(0)';
-    setTimeout(() => {
-      if (toast) {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateY(10px)';
-      }
-    }, 2800);
+    setTimeout(() => { if (toast) toast.style.opacity = '0'; }, 2600);
   }
 
-  // ─── Attach Manual Answer Event Listeners for Learn-on-the-Go ──────────────
-  function attachLearnListeners(modal) {
-    if (modal.dataset.speedfillLearnAttached === 'true') return;
+  function attachLearnListeners() {
+    const modal = document.querySelector('.jobs-easy-apply-modal, div[role="dialog"], .artdeco-modal') || document.body;
+    if (modal.dataset.speedfillLearnAttached) return;
     modal.dataset.speedfillLearnAttached = 'true';
 
     modal.addEventListener('change', e => {
       const target = e.target;
       if (!target) return;
 
-      // Text input or textarea
       if (target.matches('input[type="text"], input[type="number"], textarea')) {
         const qText = window.SpeedFillMatcher?.getElementLabelText(target);
-        if (qText && target.value.trim()) {
-          learnFromUserAnswer(qText, target.value.trim());
-        }
+        if (qText && target.value.trim()) learnFromUserAnswer(qText, target.value.trim());
       }
-
-      // Select dropdown
       if (target.matches('select')) {
         const qText = window.SpeedFillMatcher?.getElementLabelText(target);
-        const selOption = target.options[target.selectedIndex];
-        if (qText && selOption && selOption.text.trim() && selOption.value !== 'Select an option') {
-          learnFromUserAnswer(qText, selOption.text.trim());
+        const selOpt = target.options[target.selectedIndex];
+        if (qText && selOpt && selOpt.text.trim() && selOpt.value !== 'Select an option') {
+          learnFromUserAnswer(qText, selOpt.text.trim());
         }
       }
-
-      // Radio button
       if (target.matches('input[type="radio"]')) {
         const fieldset = target.closest('fieldset');
         const legend   = fieldset?.querySelector('legend, .fb-form-element-label');
         const qText    = legend?.textContent || fieldset?.textContent || '';
         const radioLbl = Array.from(target.labels || [])[0]?.textContent || target.nextElementSibling?.textContent || target.value;
-        if (qText && radioLbl) {
-          learnFromUserAnswer(qText, radioLbl.trim());
-        }
+        if (qText && radioLbl) learnFromUserAnswer(qText, radioLbl.trim());
       }
     }, true);
   }
 
-  // ─── Form Filling Processors ────────────────────────────────────────────────
+  // ─── STEP NAVIGATOR: Click Next / Review / Submit ───────────────────────────
+  function clickContinueButton() {
+    const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a[role="button"]'));
 
-  function processInputs(modal) {
-    let hasUnfilled = false;
-    const inputs = queryShadowAll(modal,
-      'input[type="text"], input[type="number"], input[type="email"], ' +
-      'input[type="tel"], input:not([type]), textarea'
-    );
+    const continueBtn = buttons.find(b => {
+      if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
 
-    for (const input of inputs) {
-      if (input.dataset.speedfillUserEdited === 'true') continue;
-      if (input.value?.trim()) continue;
-      if (input.hidden || input.disabled || input.readOnly) continue;
+      const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase().trim();
+      const text      = (b.textContent || '').toLowerCase().trim();
 
-      const match = window.SpeedFillMatcher?.matchField(input, profile);
-      if (match?.value) {
-        setNativeValue(input, match.value);
-        if (profile?.settings?.highlightFilledFields) {
-          input.classList.add('speedfill-highlight');
-        }
-        input.dataset.speedfillFilled = 'true';
-        LOG(`Filled input "${match.keyMatched}" → "${match.value}"`);
-      } else {
-        const isRequired = input.required || input.getAttribute('aria-required') === 'true';
-        if (isRequired) {
-          input.classList.add('speedfill-warning');
-          hasUnfilled = true;
-        }
-      }
-    }
-    return hasUnfilled;
-  }
+      // Exclude Close/Dismiss buttons
+      if (ariaLabel === 'dismiss' || ariaLabel.includes('close modal') || text === 'dismiss') return false;
 
-  function processDropdowns(modal) {
-    const selects = queryShadowAll(modal, 'select');
-
-    for (const select of selects) {
-      if (select.disabled) continue;
-      const curVal = (select.value || '').trim();
-      if (curVal && curVal !== '' && curVal !== 'Select an option') continue;
-
-      const match = window.SpeedFillMatcher?.matchField(select, profile);
-      if (!match?.value) continue;
-
-      const targetVal = match.value.toLowerCase().trim();
-      const options = Array.from(select.options);
-
-      const target = options.find(o => {
-        const txt = o.text.toLowerCase().trim();
-        const val = o.value.toLowerCase().trim();
-        return txt.includes(targetVal) || val.includes(targetVal);
-      });
-
-      if (target) {
-        setNativeValue(select, target.value);
-        select.classList.add('speedfill-highlight');
-        LOG(`Dropdown filled: "${match.keyMatched}" → "${target.text.trim()}"`);
-      }
-    }
-  }
-
-  function processRadioGroups(modal) {
-    let hasUnfilled = false;
-    const fieldsets = queryShadowAll(modal, 'fieldset');
-
-    for (const fieldset of fieldsets) {
-      const radios = Array.from(fieldset.querySelectorAll('input[type="radio"]'));
-      if (radios.length === 0) continue;
-      if (radios.some(r => r.checked)) continue;
-
-      const legendEl   = fieldset.querySelector('legend, .fb-form-element-label, span.t-14');
-      const legendText = (legendEl?.textContent || fieldset.textContent || '').toLowerCase().slice(0, 200);
-      let targetValue  = null;
-
-      // Q&A bank match
-      if (Array.isArray(profile?.screening)) {
-        for (const item of profile.screening) {
-          if (!item.keywords) continue;
-          const kws = item.keywords.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
-          if (kws.some(kw => legendText.includes(kw))) {
-            targetValue = item.answer.toLowerCase();
-            break;
-          }
-        }
-      }
-
-      // Smart fallbacks
-      if (!targetValue) {
-        if (/authoriz|legally eligible|right to work|work permit/.test(legendText)) targetValue = 'yes';
-        else if (/require.*sponsor|need.*visa|visa sponsor/.test(legendText))       targetValue = 'no';
-        else if (/relocat/.test(legendText))                                        targetValue = 'yes';
-        else if (/hybrid|remote|on.?site|in.?person/.test(legendText))              targetValue = 'yes';
-        else if (/currently.*work|still.*employ/.test(legendText))                  targetValue = 'yes';
-      }
-
-      if (targetValue) {
-        const picked = radios.find(r => {
-          const lbl = (
-            Array.from(r.labels || [])[0]?.textContent ||
-            r.closest('label')?.textContent ||
-            r.nextElementSibling?.textContent ||
-            r.getAttribute('aria-label') ||
-            r.value || ''
-          ).toLowerCase();
-          return lbl.includes(targetValue);
-        });
-
-        if (picked) {
-          picked.click();
-          picked.dispatchEvent(new Event('change', { bubbles: true }));
-          fieldset.classList.add('speedfill-highlight');
-          LOG(`Radio answered: "${legendText.slice(0,35)}" → "${targetValue}"`);
-        } else {
-          hasUnfilled = true;
-        }
-      } else {
-        const hasRequired = fieldset.querySelector('[aria-required="true"]');
-        if (hasRequired) hasUnfilled = true;
-      }
-    }
-    return hasUnfilled;
-  }
-
-  function processCheckboxes(modal) {
-    // Auto-check terms / agreement checkboxes if required
-    const checkboxes = queryShadowAll(modal, 'input[type="checkbox"]:not(:checked)');
-    checkboxes.forEach(cb => {
-      const isRequired = cb.required || cb.getAttribute('aria-required') === 'true';
-      const labelText  = (cb.labels?.[0]?.textContent || cb.closest('label')?.textContent || '').toLowerCase();
-      if (isRequired || /agree|terms|consent|certify|acknowledge/.test(labelText)) {
-        cb.click();
-        cb.checked = true;
-        cb.dispatchEvent(new Event('change', { bubbles: true }));
-        LOG('Agreement checkbox auto-checked');
-      }
-    });
-  }
-
-  function processResumeStep(modal) {
-    if (!profile?.settings?.autoSelectResume) return;
-
-    const resumeSelectors = [
-      '.jobs-resume-picker input[type="radio"]:not(:checked)',
-      '.jobs-document-upload-redesign input[type="radio"]:not(:checked)',
-      '[data-test-resume-card] input[type="radio"]:not(:checked)',
-      'input[name="resume"]:not(:checked)',
-      '.artdeco-card input[type="radio"]:not(:checked)'
-    ];
-
-    for (const sel of resumeSelectors) {
-      const radioCards = queryShadowAll(modal, sel);
-      if (radioCards.length > 0) {
-        radioCards[0].click();
-        radioCards[0].dispatchEvent(new Event('change', { bubbles: true }));
-        LOG('Resume selected');
-        return;
-      }
-    }
-
-    const useBtn = queryShadowFirst(modal,
-      'button[aria-label*="Use"], button[aria-label*="Select resume"]'
-    );
-    if (useBtn) { useBtn.click(); LOG('Resume button clicked'); }
-  }
-
-  // ─── Find Action Button (Next / Review / Submit) ───────────────────────────
-  function findActionButton(modal) {
-    const doc = modal.ownerDocument || document;
-
-    const candidates = [
-      ...queryShadowAll(modal, 'button'),
-      ...queryShadowAll(doc, 'button[aria-label="Continue to next step"], button[aria-label*="Submit"], button[aria-label*="Review"]')
-    ];
-
-    const uniqueCandidates = Array.from(new Set(candidates));
-
-    let nextBtn   = null;
-    let reviewBtn = null;
-    let submitBtn = null;
-
-    for (const btn of uniqueCandidates) {
-      if (btn.disabled) continue;
-      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
-      const text      = (btn.textContent || '').toLowerCase().trim();
-
-      // Exclude close/dismiss button
-      if (ariaLabel === 'dismiss' || ariaLabel.includes('close modal') || text === 'dismiss') continue;
-
-      if (ariaLabel.includes('submit application') || ariaLabel.includes('submit your application') || text === 'submit application') {
-        submitBtn = btn;
-      } else if (ariaLabel.includes('review your application') || ariaLabel.includes('review') || text === 'review') {
-        reviewBtn = btn;
-      } else if (
+      return (
         ariaLabel === 'continue to next step' ||
         ariaLabel.includes('next step') ||
         ariaLabel.includes('continue') ||
+        ariaLabel.includes('review') ||
         text === 'next' ||
-        text === 'continue'
-      ) {
-        nextBtn = btn;
-      }
-    }
+        text === 'continue' ||
+        text.includes('next') ||
+        text.includes('continue') ||
+        text.includes('review') ||
+        b.classList.contains('artdeco-button--primary')
+      );
+    });
 
-    return { submitBtn, reviewBtn, nextBtn };
+    if (continueBtn) {
+      LOG('Auto-advancing step via button:', continueBtn.getAttribute('aria-label') || continueBtn.textContent.trim());
+      continueBtn.click();
+      return true;
+    }
+    return false;
   }
 
-  // ─── Step Navigator & Auto-Advancement ──────────────────────────────────────
-  function advanceNextStep(modal) {
-    if (!modal?.isConnected) return;
+  function clickSubmitButton() {
+    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
 
-    const { submitBtn, reviewBtn, nextBtn } = findActionButton(modal);
+    const submitBtn = buttons.find(b => {
+      if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
 
-    LOG(`Action buttons found — submit:${!!submitBtn} review:${!!reviewBtn} next:${!!nextBtn}`);
+      const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase().trim();
+      const text      = (b.textContent || '').toLowerCase().trim();
 
-    if (submitBtn && profile?.settings?.autoSubmitApplication !== false) {
-      LOG('🚀 Submitting application');
-      submitBtn.click();
+      if (ariaLabel === 'dismiss' || text === 'dismiss') return false;
+
+      return (
+        ariaLabel.includes('submit application') ||
+        ariaLabel.includes('submit your application') ||
+        text.includes('submit application') ||
+        text.includes('submit your application') ||
+        text === 'submit'
+      );
+    });
+
+    if (submitBtn) {
+      LOG('Auto-submitting application via button:', submitBtn.getAttribute('aria-label') || submitBtn.textContent.trim());
       logApplicationSubmit();
-      window.postMessage({ type: 'SPEEDFILL_APPLICATION_SUBMITTED' }, '*');
+      submitBtn.click();
+
       setTimeout(() => {
-        const dismiss = document.querySelector(
-          'button[aria-label="Dismiss"], .artdeco-modal__dismiss, button[data-test-modal-close-btn]'
-        );
+        const dismiss = document.querySelector('button[aria-label="Dismiss"], .artdeco-modal__dismiss, button[data-test-modal-close-btn]');
         if (dismiss) dismiss.click();
       }, 1200);
-      return;
+      return true;
     }
-
-    if (reviewBtn) { LOG('Clicking Review step'); reviewBtn.click(); return; }
-    if (nextBtn)   { LOG('Clicking Next step');   nextBtn.click();   return; }
-
-    LOG('No action button to click on this step');
+    return false;
   }
 
-  // ─── Application Logging ────────────────────────────────────────────────────
   function logApplicationSubmit() {
-    const jobTitle = document.querySelector(
-      '.jobs-easy-apply-modal h2, .t-24, .jobs-unified-top-card__job-title'
-    )?.textContent?.trim() || 'LinkedIn Job';
-    const company = document.querySelector(
-      '.jobs-unified-top-card__company-name, .job-details-jobs-unified-top-card__company-name'
-    )?.textContent?.trim() || 'LinkedIn Company';
+    const jobTitle = document.querySelector('.jobs-easy-apply-modal h2, .t-24, .jobs-unified-top-card__job-title')?.textContent?.trim() || 'LinkedIn Job';
+    const company  = document.querySelector('.jobs-unified-top-card__company-name, .job-details-jobs-unified-top-card__company-name')?.textContent?.trim() || 'LinkedIn Company';
 
     chrome.storage.local.get(['applicationLog'], result => {
       const log = result.applicationLog || [];
@@ -502,114 +371,125 @@
     });
   }
 
-  // ─── Main Step Processor ────────────────────────────────────────────────────
-  function getModalHash(modal) {
-    try {
-      const els = Array.from(modal.querySelectorAll('input, select, textarea, fieldset, button'));
-      return els.map(e => (e.id || e.name || e.tagName + (e.type || ''))).join('|');
-    } catch(e) { return Date.now().toString(); }
-  }
-
-  function processModalStep() {
-    if (processingLock) return;
-    if (!profile) {
-      loadProfile(() => processModalStep());
-      return;
+  // ─── CORE FORM FILLING LOOP ────────────────────────────────────────────────
+  function fillCurrentForm() {
+    if (!userProfile) {
+      loadProfile(() => fillCurrentForm());
+      return 0;
     }
 
-    const modal = findEasyApplyModal();
-    if (!modal) return;
+    attachLearnListeners();
 
-    // Attach Learn-on-the-Go manual input listeners
-    attachLearnListeners(modal);
+    let filledCount = 0;
 
-    const hash = getModalHash(modal);
-    if (hash === lastModalHash) return;
-    lastModalHash = hash;
+    // 1. Handle Resume step
+    const handledResume = handleResumeStep();
 
-    processingLock = true;
-    try {
-      const missingInputs = processInputs(modal);
-      const missingRadios = processRadioGroups(modal);
-      processDropdowns(modal);
-      processCheckboxes(modal);
-      processResumeStep(modal);
+    // 2. Handle Checkboxes
+    handleCheckboxes();
 
-      const hasMissing = missingInputs || missingRadios;
+    // 3. Handle Radio groups
+    filledCount += handleRadioGroups();
 
-      if (hasMissing && profile?.settings?.pauseOnUnmatchedFields) {
-        LOG('Pausing due to missing required fields (pauseOnUnmatchedFields is enabled)');
-        window.postMessage({ type: 'SPEEDFILL_REVIEW_NEEDED' }, '*');
-        return;
+    // 4. Handle Text inputs, textarea, numbers
+    const inputs = document.querySelectorAll(
+      'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input:not([type]), textarea'
+    );
+    inputs.forEach(input => {
+      if (input.offsetWidth === 0 && input.offsetHeight === 0) return;
+      const match = window.SpeedFillMatcher?.matchField(input, userProfile);
+      if (match && match.value) {
+        if (setReactInputValue(input, match.value)) filledCount++;
       }
+    });
 
-      if (profile?.settings?.autoAdvanceStep !== false) {
-        const delay = Math.max(0, profile.settings?.stepDelayMs ?? 400);
-        clearTimeout(stepTimer);
-        stepTimer = setTimeout(() => advanceNextStep(modal), delay);
+    // 5. Handle Select dropdowns
+    const selects = document.querySelectorAll('select');
+    selects.forEach(select => {
+      if (select.offsetWidth === 0 && select.offsetHeight === 0) return;
+      const match = window.SpeedFillMatcher?.matchField(select, userProfile);
+      if (match && match.value) {
+        if (setSelectValue(select, match.value)) filledCount++;
       }
-    } finally {
-      processingLock = false;
+    });
+
+    if (filledCount > 0) {
+      LOG(`Auto-filled ${filledCount} field(s) on current step`);
     }
+
+    const stepDelay = userProfile?.settings?.stepDelayMs ?? 200;
+
+    // 6. Check for Submit button first
+    if (userProfile?.settings?.autoSubmitApplication !== false) {
+      const submitted = clickSubmitButton();
+      if (submitted) return filledCount;
+    }
+
+    // 7. Auto-advance intermediate steps (Next / Continue / Review)
+    if (userProfile?.settings?.autoAdvanceStep !== false) {
+      setTimeout(clickContinueButton, stepDelay);
+    }
+
+    return filledCount;
   }
 
-  // ─── Global Easy Apply Click Interceptor ───────────────────────────────────
-  function attachEasyApplyClickListener() {
-    document.addEventListener('click', e => {
-      const target = e.target;
-      if (!target) return;
+  // ─── FAST OBSERVER & EVENT LISTENERS ───────────────────────────────────────
+  function setupDOMObserver() {
+    if (isObserverActive) return;
 
-      const isEasyApply = (
-        target.textContent?.includes('Easy Apply') ||
-        target.getAttribute('aria-label')?.includes('Easy Apply') ||
-        target.closest('.jobs-apply-button') ||
-        target.closest('[data-job-apply-button]')
-      );
-
-      if (isEasyApply) {
-        LOG('User clicked Easy Apply button — initializing instant fill loop');
-        lastModalHash = '';
-        // Poll for modal opening
-        [150, 400, 800, 1200, 1800].forEach(delay => {
-          setTimeout(processModalStep, delay);
-        });
-      }
-    }, true);
-  }
-
-  // ─── MutationObserver ───────────────────────────────────────────────────────
-  function startObserver() {
-    if (observer) observer.disconnect();
-
-    observer = new MutationObserver(() => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        if (!profile?.settings?.autoFillOnLoad) return;
-        const modal = findEasyApplyModal();
-        if (modal) processModalStep();
-      }, 300);
+    const observer = new MutationObserver(() => {
+      clearTimeout(window._speedfillTimer);
+      window._speedfillTimer = setTimeout(() => {
+        if (userProfile?.settings?.autoFillOnLoad !== false) {
+          fillCurrentForm();
+        }
+      }, 50); // Ultra-fast 50ms debounce matching Indeed engine
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
+    isObserverActive = true;
   }
 
-  // ─── Manual-Edit Lock ────────────────────────────────────────────────────────
-  document.addEventListener('input', e => {
-    if (e.target?.matches?.('input, textarea')) {
-      e.target.dataset.speedfillUserEdited = 'true';
+  // Trigger fill when user clicks anywhere inside an Easy Apply modal or button
+  document.addEventListener('click', e => {
+    const target = e.target;
+    if (!target) return;
+
+    const isApplyBtn = target.textContent?.includes('Easy Apply') ||
+                       target.getAttribute('aria-label')?.includes('Easy Apply') ||
+                       target.closest('.jobs-apply-button');
+
+    if (isApplyBtn) {
+      LOG('User clicked Easy Apply button — initiating fast fill loop');
+      [100, 300, 600, 1000, 1500].forEach(delay => {
+        setTimeout(fillCurrentForm, delay);
+      });
+    }
+
+    // When user clicks radio / select inside modal, trigger auto-advance check
+    if (target.matches('input[type="radio"], input[type="checkbox"], option')) {
+      setTimeout(fillCurrentForm, 150);
     }
   }, true);
 
-  // ─── Message Listener (Alt+F Hotkey) ────────────────────────────────────────
+  // User manual input listener to clear userEdited lock if cleared
+  document.addEventListener('input', e => {
+    if (e.target?.matches?.('input, textarea')) {
+      if (e.target.value.trim()) {
+        e.target.dataset.speedfillUserEdited = 'true';
+      }
+    }
+  }, true);
+
+  // Alt+F Hotkey trigger
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'TRIGGER_AUTOFILL') {
-        LOG('Autofill manually triggered via Alt+F');
-        lastModalHash = '';
-        if (profile) {
-          processModalStep();
+        LOG('Alt+F hotkey triggered');
+        if (userProfile) {
+          fillCurrentForm();
         } else {
-          loadProfile(() => processModalStep());
+          loadProfile(() => fillCurrentForm());
         }
         sendResponse({ status: 'OK' });
         return true;
@@ -617,11 +497,13 @@
     });
   }
 
-  // ─── Boot ──────────────────────────────────────────────────────────────────
+  // ─── BOOT ──────────────────────────────────────────────────────────────────
   function init() {
-    LOG('SpeedFill Auto-Apply Engine v2.0.0 initialized');
-    attachEasyApplyClickListener();
-    loadProfile(() => startObserver());
+    LOG('SpeedFill Auto-Apply Engine v2.1.0 (Indeed Architecture) initialized');
+    loadProfile(() => {
+      setupDOMObserver();
+      fillCurrentForm();
+    });
   }
 
   if (document.readyState === 'loading') {
