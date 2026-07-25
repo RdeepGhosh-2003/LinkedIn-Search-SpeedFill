@@ -1,19 +1,25 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn SpeedFill Auto-Apply Engine",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sub-10ms auto-filler and search auto-apply assistant for LinkedIn Easy Apply jobs in Chrome & Brave.",
   "permissions": [
     "storage",
     "activeTab",
-    "notifications"
+    "notifications",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.linkedin.com/*",
     "https://linkedin.com/*"
   ],
   "action": {
-    "default_popup": "popup/popup.html"
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "background": {
     "service_worker": "scripts/background.js"
@@ -24,8 +30,7 @@
         "https://*.linkedin.com/*",
         "https://linkedin.com/*"
       ],
-      "all_frames": true,
-      "match_about_blank": true,
+      "all_frames": false,
       "js": [
         "scripts/matcher.js",
         "scripts/linkedin_search.js",
@@ -45,5 +50,16 @@
       },
       "description": "Instant trigger auto-fill on current LinkedIn Easy Apply modal"
     }
-  }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["data/default_profile.json", "icons/*.png"],
+      "matches": ["https://*.linkedin.com/*"]
+    }
+  ]
 }

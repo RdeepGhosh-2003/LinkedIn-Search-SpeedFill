@@ -1,187 +1,261 @@
 /**
- * LinkedIn SpeedFill - Search Results & Auto-Apply Controller
- * Handles job list scanning, Easy Apply filtering, queue progression on linkedin.com/jobs
+ * LinkedIn SpeedFill – Search Results & Auto-Apply Queue Controller v1.1
+ *
+ * Responsibilities:
+ *  • Inject a floating control widget onto LinkedIn jobs pages
+ *  • Iterate through search result job cards
+ *  • Detect "Easy Apply" vs. external apply, skip non-Easy Apply
+ *  • Detect and skip already-applied jobs
+ *  • Handle LinkedIn's SPA navigation (URL change without page reload)
+ *  • Relay SPEEDFILL_APPLICATION_SUBMITTED / SPEEDFILL_REVIEW_NEEDED messages
+ *    from linkedin_easy_apply.js to update the pill UI
  */
 
-(function() {
+(function () {
   'use strict';
 
-  let profileData = null;
-  let isAutoQueueActive = false;
-  let appliedCount = 0;
-  let skippedCount = 0;
-  let currentJobIndex = -1;
+  // ─── State ─────────────────────────────────────────────────────────────────
+  let isQueueActive   = false;
+  let currentIndex    = -1;
+  let appliedCount    = 0;
+  let skippedCount    = 0;
+  let lastPathname    = location.pathname;
 
-  // Load profile from storage
-  function loadProfile() {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['userProfile'], (result) => {
-        if (result.userProfile) {
-          profileData = result.userProfile;
-          if (profileData.settings && profileData.settings.autoQueueSearchJobs) {
-            // Auto queue feature flag
-          }
-        }
-      });
+  // ─── SPA Navigation Watcher ─────────────────────────────────────────────────
+  // LinkedIn is a SPA — URL changes don't trigger page reloads.
+  const navObserver = new MutationObserver(() => {
+    if (location.pathname !== lastPathname) {
+      lastPathname = location.pathname;
+      onNavigate();
+    }
+  });
+  navObserver.observe(document.body, { childList: true, subtree: true });
+
+  function onNavigate() {
+    if (isJobsPage()) {
+      setTimeout(injectPill, 1000);
+    } else {
+      removePill();
     }
   }
 
-  // Inject top floating control pill widget on LinkedIn search page
-  function injectFloatingPill() {
-    if (document.getElementById('speedfill-linkedin-bar')) return;
+  function isJobsPage() {
+    return /linkedin\.com\/jobs/.test(location.href);
+  }
 
-    const bar = document.createElement('div');
-    bar.id = 'speedfill-linkedin-bar';
-    bar.className = 'speedfill-floating-pill';
-    bar.innerHTML = `
+  // ─── Pill Injection ─────────────────────────────────────────────────────────
+  function injectPill() {
+    if (document.getElementById('sf-pill')) return;
+    if (!isJobsPage()) return;
+
+    const pill = document.createElement('div');
+    pill.id = 'sf-pill';
+    pill.className = 'speedfill-floating-pill';
+    pill.innerHTML = `
       <div class="speedfill-pill-content">
         <div class="speedfill-pill-header">
-          <span class="speedfill-logo">⚡ LinkedIn SpeedFill</span>
-          <span id="speedfill-status-badge" class="speedfill-badge speedfill-badge-idle">Ready</span>
+          <span class="speedfill-logo">⚡ SpeedFill</span>
+          <span id="sf-badge" class="speedfill-badge speedfill-badge-idle">Ready</span>
         </div>
         <div class="speedfill-pill-stats">
-          <span>Applied: <strong id="speedfill-applied-count">0</strong></span>
-          <span>Skipped: <strong id="speedfill-skipped-count">0</strong></span>
+          <span>✅ Applied: <strong id="sf-applied">0</strong></span>
+          <span>⏭ Skipped: <strong id="sf-skipped">0</strong></span>
         </div>
         <div class="speedfill-pill-actions">
-          <button id="speedfill-btn-start" class="speedfill-btn speedfill-btn-primary">▶ Start Queue</button>
-          <button id="speedfill-btn-pause" class="speedfill-btn speedfill-btn-secondary" style="display:none;">⏸ Pause</button>
-          <button id="speedfill-btn-next" class="speedfill-btn speedfill-btn-ghost">⏭ Next Job</button>
+          <button id="sf-start" class="speedfill-btn speedfill-btn-primary">▶ Start Queue</button>
+          <button id="sf-pause" class="speedfill-btn speedfill-btn-secondary" style="display:none">⏸ Pause</button>
+          <button id="sf-next"  class="speedfill-btn speedfill-btn-ghost">⏭ Next</button>
         </div>
+        <div id="sf-job-title" class="speedfill-pill-job" style="display:none"></div>
       </div>
     `;
 
-    document.body.appendChild(bar);
+    document.body.appendChild(pill);
 
-    // Event listeners
-    document.getElementById('speedfill-btn-start').addEventListener('click', startQueue);
-    document.getElementById('speedfill-btn-pause').addEventListener('click', pauseQueue);
-    document.getElementById('speedfill-btn-next').addEventListener('click', processNextJobCard);
+    document.getElementById('sf-start').addEventListener('click', startQueue);
+    document.getElementById('sf-pause').addEventListener('click', pauseQueue);
+    document.getElementById('sf-next').addEventListener('click', () => {
+      currentIndex++;
+      processCard();
+    });
   }
 
-  function updateStatus(statusText, badgeClass) {
-    const badge = document.getElementById('speedfill-status-badge');
+  function removePill() {
+    document.getElementById('sf-pill')?.remove();
+  }
+
+  // ─── UI Helpers ─────────────────────────────────────────────────────────────
+  function setBadge(text, cls) {
+    const badge = document.getElementById('sf-badge');
     if (badge) {
-      badge.textContent = statusText;
-      badge.className = `speedfill-badge ${badgeClass}`;
+      badge.textContent = text;
+      badge.className = `speedfill-badge ${cls}`;
     }
   }
 
   function updateStats() {
-    const appliedEl = document.getElementById('speedfill-applied-count');
-    const skippedEl = document.getElementById('speedfill-skipped-count');
-    if (appliedEl) appliedEl.textContent = appliedCount;
-    if (skippedEl) skippedEl.textContent = skippedCount;
+    const a = document.getElementById('sf-applied');
+    const s = document.getElementById('sf-skipped');
+    if (a) a.textContent = appliedCount;
+    if (s) s.textContent = skippedCount;
   }
 
+  function setJobTitle(text) {
+    const el = document.getElementById('sf-job-title');
+    if (el) {
+      el.style.display = text ? 'block' : 'none';
+      el.textContent = text;
+    }
+  }
+
+  // ─── Queue Control ──────────────────────────────────────────────────────────
   function startQueue() {
-    isAutoQueueActive = true;
-    document.getElementById('speedfill-btn-start').style.display = 'none';
-    document.getElementById('speedfill-btn-pause').style.display = 'inline-flex';
-    updateStatus('Queue Active', 'speedfill-badge-active');
-    processNextJobCard();
+    isQueueActive = true;
+    currentIndex  = -1;
+    document.getElementById('sf-start').style.display = 'none';
+    document.getElementById('sf-pause').style.display = 'inline-flex';
+    setBadge('Running', 'speedfill-badge-active');
+    processCard();
   }
 
   function pauseQueue() {
-    isAutoQueueActive = false;
-    document.getElementById('speedfill-btn-start').style.display = 'inline-flex';
-    document.getElementById('speedfill-btn-pause').style.display = 'none';
-    updateStatus('Paused', 'speedfill-badge-idle');
+    isQueueActive = false;
+    document.getElementById('sf-start').style.display = 'inline-flex';
+    document.getElementById('sf-pause').style.display = 'none';
+    setBadge('Paused', 'speedfill-badge-idle');
+    setJobTitle('');
   }
 
-  // Get all job cards visible on LinkedIn search page
+  // ─── Job Card Processing ────────────────────────────────────────────────────
+
   function getJobCards() {
-    const cards = document.querySelectorAll('.jobs-search-results-list li, .scaffold-layout__list-item, div[data-job-id]');
-    return Array.from(cards);
+    // Multiple LinkedIn DOM variants
+    return Array.from(document.querySelectorAll(
+      '.jobs-search-results-list__list-item, ' +
+      '.scaffold-layout__list-item, ' +
+      'li.jobs-search-results__list-item, ' +
+      'div[data-job-id]'
+    ));
   }
 
-  // Process next job card in search list
-  function processNextJobCard() {
-    if (!isAutoQueueActive) return;
+  function isAlreadyApplied(card) {
+    const text = card.textContent || '';
+    return /applied/i.test(text) && !/easy apply/i.test(text);
+  }
+
+  function hasEasyApplyBadge(card) {
+    const text = card.textContent || '';
+    return /easy apply/i.test(text) ||
+           card.querySelector('[aria-label*="Easy Apply"], .job-card-container__easy-apply-label') !== null;
+  }
+
+  function processCard() {
+    if (!isQueueActive) return;
 
     const cards = getJobCards();
-    currentJobIndex++;
+    currentIndex++;
 
-    if (currentJobIndex >= cards.length) {
-      updateStatus('End of List', 'speedfill-badge-warning');
+    if (currentIndex >= cards.length) {
+      setBadge('End of List', 'speedfill-badge-warning');
       pauseQueue();
       return;
     }
 
-    const card = cards[currentJobIndex];
+    const card = cards[currentIndex];
+
+    // Smooth scroll to card
     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-    // Check if card is already applied
-    const text = card.textContent || '';
-    if (text.includes('Applied') || text.includes('Applied ')) {
+    // Reset border from previous pass
+    card.style.outline = '';
+
+    // Already applied → skip fast
+    if (isAlreadyApplied(card)) {
+      card.style.opacity = '0.45';
       skippedCount++;
       updateStats();
-      card.style.opacity = '0.5';
-      setTimeout(processNextJobCard, 600);
+      setBadge(`Skipped (${skippedCount})`, 'speedfill-badge-idle');
+      setTimeout(processCard, 500);
       return;
     }
 
-    // Check if job is "Easy Apply"
-    const isEasyApply = text.includes('Easy Apply') || card.querySelector('.job-card-container__apply-method, svg[data-test-icon="linkedin-bug-color-icon"]');
-    
-    // Highlight card
-    card.style.border = '2px solid #0a66c2';
+    // Only Easy Apply jobs — skip anything else after checking the detail pane
+    card.style.outline = '2px solid #0a66c2';
     card.style.borderRadius = '8px';
 
-    // Click the job card to select it
-    const clickTarget = card.querySelector('a.job-card-container__link, .job-card-list__title, a.job-card-list__title') || card;
-    clickTarget.click();
+    // Click to open job details pane
+    const anchor = card.querySelector(
+      'a.job-card-container__link, a.job-card-list__title, ' +
+      '.job-card-list__title--link, a[data-job-id]'
+    ) || card;
+    anchor.click();
 
-    updateStatus(`Checking Job ${currentJobIndex + 1}...`, 'speedfill-badge-active');
+    const jobName = card.querySelector(
+      '.job-card-list__title, .job-card-container__link'
+    )?.textContent?.trim() || `Job #${currentIndex + 1}`;
+    setJobTitle(`🔍 ${jobName}`);
+    setBadge(`Checking…`, 'speedfill-badge-active');
 
-    // Wait for job details pane to render
-    setTimeout(() => {
-      triggerEasyApplyButton();
-    }, 1200);
+    // Wait for right-pane detail to render, then look for Easy Apply button
+    setTimeout(tryClickEasyApply, 1400);
   }
 
-  // Find and click the "Easy Apply" button in the right detail pane
-  function triggerEasyApplyButton() {
-    if (!isAutoQueueActive) return;
+  function tryClickEasyApply() {
+    if (!isQueueActive) return;
 
-    // Look for Easy Apply button in right pane
-    const easyApplyBtn = document.querySelector('.jobs-apply-button--top-card button, button.jobs-apply-button, button[data-job-apply-button]');
-    
-    if (easyApplyBtn && (easyApplyBtn.textContent.includes('Easy Apply') || easyApplyBtn.getAttribute('aria-label')?.includes('Easy Apply'))) {
-      updateStatus('Opening Easy Apply...', 'speedfill-badge-active');
-      easyApplyBtn.click();
-      
-      // The Easy Apply Modal engine (linkedin_easy_apply.js) will take over multi-step form filling.
+    // Look for the top-card Easy Apply button in the right detail pane
+    const btn = document.querySelector(
+      '.jobs-apply-button--top-card button[aria-label*="Easy Apply"], ' +
+      'button.jobs-s-apply button[aria-label*="Easy Apply"], ' +
+      '.jobs-apply-button button[aria-label*="Easy Apply"], ' +
+      'button[aria-label*="Easy Apply"]:not([data-job-apply-external])'
+    );
+
+    if (btn && !btn.disabled) {
+      const jobTitle = document.querySelector(
+        '.jobs-unified-top-card__job-title, .t-24.t-bold'
+      )?.textContent?.trim() || '';
+      setJobTitle(`🚀 Applying: ${jobTitle}`);
+      setBadge('Applying…', 'speedfill-badge-active');
+      btn.click();
+      // linkedin_easy_apply.js takes over from here
+      // We wait for SPEEDFILL_APPLICATION_SUBMITTED message
     } else {
-      // Not an Easy Apply job or already applied
+      // Not Easy Apply or already applied from detail pane
       skippedCount++;
       updateStats();
-      setTimeout(processNextJobCard, 1000);
+      setBadge(`Skipped (${skippedCount})`, 'speedfill-badge-idle');
+      setJobTitle('');
+      setTimeout(processCard, 900);
     }
   }
 
-  // Listen for messages from linkedin_easy_apply.js when an application completes
-  window.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'SPEEDFILL_APPLICATION_SUBMITTED') {
+  // ─── Message Bus ────────────────────────────────────────────────────────────
+  window.addEventListener('message', ev => {
+    if (!ev.data?.type) return;
+
+    if (ev.data.type === 'SPEEDFILL_APPLICATION_SUBMITTED') {
       appliedCount++;
       updateStats();
-      updateStatus('Applied Successfully!', 'speedfill-badge-success');
-      
-      if (isAutoQueueActive) {
-        setTimeout(processNextJobCard, 1500);
+      setBadge(`Applied ✓ (${appliedCount})`, 'speedfill-badge-success');
+      setJobTitle('');
+      if (isQueueActive) {
+        setTimeout(processCard, 1800);
       }
-    } else if (event.data && event.data.type === 'SPEEDFILL_REVIEW_NEEDED') {
-      updateStatus('⚠️ Review Needed', 'speedfill-badge-warning');
+    }
+
+    if (ev.data.type === 'SPEEDFILL_REVIEW_NEEDED') {
+      setBadge('⚠️ Review Needed', 'speedfill-badge-warning');
+      isQueueActive = false;
+      document.getElementById('sf-start').style.display = 'inline-flex';
+      document.getElementById('sf-pause').style.display = 'none';
     }
   });
 
-  // Init listener
+  // ─── Boot ──────────────────────────────────────────────────────────────────
   function init() {
-    loadProfile();
-
-    // Check if on LinkedIn jobs page
-    if (window.location.href.includes('linkedin.com/jobs')) {
-      setTimeout(injectFloatingPill, 1500);
+    if (isJobsPage()) {
+      setTimeout(injectPill, 1500);
     }
   }
 

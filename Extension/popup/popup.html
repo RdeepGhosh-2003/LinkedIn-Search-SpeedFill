@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LinkedIn SpeedFill Profile</title>
+  <title>LinkedIn SpeedFill – Dashboard</title>
   <link rel="stylesheet" href="popup.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,69 +11,66 @@
 </head>
 <body>
   <div class="app-container">
-    <!-- Header -->
+
+    <!-- ─── Header ──────────────────────────────────────────────────────── -->
     <header class="app-header">
       <div class="logo">
         <span class="icon">⚡</span>
         <h1>SpeedFill <span class="badge">LinkedIn</span></h1>
       </div>
-      <div style="display: flex; gap: 8px;">
-        <button id="theme-toggle-btn" class="btn btn-secondary" style="padding: 8px; border-radius: 50%;" title="Toggle Light/Dark Theme">🌙</button>
-        <button id="save-btn" class="btn btn-primary">Save Profile</button>
+      <div class="header-actions">
+        <button id="theme-toggle-btn" class="btn btn-icon" title="Toggle Theme">🌙</button>
+        <button id="save-btn" class="btn btn-primary">Save</button>
       </div>
     </header>
 
-    <!-- Navigation Tabs -->
+    <!-- ─── Tabs ────────────────────────────────────────────────────────── -->
     <nav class="tab-nav">
       <button class="tab-btn active" data-tab="tab-work">💼 Roles</button>
       <button class="tab-btn" data-tab="tab-personal">👤 Personal</button>
       <button class="tab-btn" data-tab="tab-education">🎓 Education</button>
-      <button class="tab-btn" data-tab="tab-screening">❓ Q&A Bank</button>
+      <button class="tab-btn" data-tab="tab-screening">❓ Q&amp;A</button>
+      <button class="tab-btn" data-tab="tab-logs">📊 Logs</button>
       <button class="tab-btn" data-tab="tab-settings">⚙️ Settings</button>
     </nav>
 
-    <!-- Tab Contents -->
+    <!-- ─── Tab Content ─────────────────────────────────────────────────── -->
     <div class="tab-content-container">
-      
-      <!-- Roles Tab -->
+
+      <!-- ── Roles ─────────────────────────────────────────────────────── -->
       <section id="tab-work" class="tab-pane active">
-        <!-- Current Role -->
-        <div class="role-section-card">
-          <div class="role-section-header">
-            <h3>🏢 Current Role</h3>
-          </div>
+
+        <div class="role-card">
+          <div class="role-card-header current">🏢 Current Role</div>
           <div class="form-group">
-            <label for="currentJobTitle">Current Job Title</label>
+            <label for="currentJobTitle">Job Title</label>
             <input type="text" id="currentJobTitle" placeholder="e.g. Software Engineer">
           </div>
           <div class="form-group">
-            <label for="currentCompany">Current Company</label>
+            <label for="currentCompany">Company</label>
             <input type="text" id="currentCompany" placeholder="e.g. Acme Corporation">
           </div>
           <div class="form-grid">
             <div class="form-group">
-              <label for="yearsExperience">Years of Experience</label>
+              <label for="yearsExperience">Years of Exp.</label>
               <input type="text" id="yearsExperience" placeholder="e.g. 3">
             </div>
             <div class="form-group">
-              <label for="currentSalary">Current CTC (Per Annum)</label>
+              <label for="currentSalary">Current CTC</label>
               <input type="text" id="currentSalary" placeholder="e.g. 500000">
             </div>
           </div>
         </div>
 
-        <!-- Target Role -->
-        <div class="role-section-card target-card">
-          <div class="role-section-header">
-            <h3>🎯 Target Role</h3>
-          </div>
+        <div class="role-card target">
+          <div class="role-card-header target">🎯 Target Role</div>
           <div class="form-group">
             <label for="targetJobTitle">Target Job Title</label>
             <input type="text" id="targetJobTitle" placeholder="e.g. Senior Software Engineer">
           </div>
           <div class="form-group">
-            <label for="targetLocation">Preferred Target Location</label>
-            <input type="text" id="targetLocation" placeholder="e.g. Sample City">
+            <label for="targetLocation">Preferred Location</label>
+            <input type="text" id="targetLocation" placeholder="e.g. Bengaluru">
           </div>
           <div class="form-grid">
             <div class="form-group">
@@ -81,161 +78,197 @@
               <input type="text" id="noticePeriod" placeholder="e.g. 30 Days">
             </div>
             <div class="form-group">
-              <label for="expectedSalary">Expected CTC (Per Annum)</label>
+              <label for="expectedSalary">Expected CTC</label>
               <input type="text" id="expectedSalary" placeholder="e.g. 700000">
             </div>
           </div>
         </div>
       </section>
 
-      <!-- Personal Tab -->
+      <!-- ── Personal ──────────────────────────────────────────────────── -->
       <section id="tab-personal" class="tab-pane">
         <div class="form-group">
           <label for="fullName">Full Name</label>
-          <input type="text" id="fullName" placeholder="e.g. John Doe">
+          <input type="text" id="fullName" placeholder="e.g. Arjun Sharma">
         </div>
-
         <div class="form-grid">
           <div class="form-group">
             <label for="firstName">First Name</label>
-            <input type="text" id="firstName" placeholder="e.g. John">
+            <input type="text" id="firstName" placeholder="Arjun">
           </div>
           <div class="form-group">
             <label for="lastName">Last Name</label>
-            <input type="text" id="lastName" placeholder="e.g. Doe">
+            <input type="text" id="lastName" placeholder="Sharma">
           </div>
         </div>
-
         <div class="form-grid">
           <div class="form-group">
-            <label for="email">Email Address</label>
-            <input type="email" id="email" placeholder="e.g. john.doe@example.com">
+            <label for="email">Email</label>
+            <input type="email" id="email" placeholder="you@example.com">
           </div>
           <div class="form-group">
-            <label for="phone">Phone Number</label>
-            <input type="tel" id="phone" placeholder="e.g. 1234567890">
+            <label for="phone">Phone</label>
+            <input type="tel" id="phone" placeholder="9876543210">
           </div>
         </div>
-
         <div class="form-grid">
           <div class="form-group">
             <label for="city">City</label>
-            <input type="text" id="city" placeholder="Sample City">
+            <input type="text" id="city" placeholder="Bengaluru">
           </div>
           <div class="form-group">
-            <label for="state">State / Province</label>
-            <input type="text" id="state" placeholder="e.g. CA">
+            <label for="state">State</label>
+            <input type="text" id="state" placeholder="Karnataka">
           </div>
         </div>
         <div class="form-group">
-          <label for="linkedin">LinkedIn Profile URL</label>
-          <input type="url" id="linkedin" placeholder="e.g. linkedin.com/in/johndoe">
+          <label for="linkedin">LinkedIn URL</label>
+          <input type="url" id="linkedin" placeholder="https://linkedin.com/in/username">
         </div>
       </section>
 
-      <!-- Education Tab -->
+      <!-- ── Education ─────────────────────────────────────────────────── -->
       <section id="tab-education" class="tab-pane">
         <div class="form-group">
-          <label for="degree">Highest Degree / Qualification</label>
-          <input type="text" id="degree" placeholder="e.g. Bachelor of Science">
+          <label for="degree">Degree / Qualification</label>
+          <input type="text" id="degree" placeholder="e.g. B.Tech / B.Sc">
         </div>
-
         <div class="form-group">
           <label for="major">Field of Study / Major</label>
           <input type="text" id="major" placeholder="e.g. Computer Science">
         </div>
-
         <div class="form-group">
           <label for="university">University / Institute</label>
-          <input type="text" id="university" placeholder="e.g. Sample University">
+          <input type="text" id="university" placeholder="e.g. IIT Delhi">
         </div>
-
         <div class="form-group">
           <label for="graduationYear">Graduation Year</label>
           <input type="text" id="graduationYear" placeholder="e.g. 2022">
         </div>
       </section>
 
-      <!-- Screening Q&A Tab -->
+      <!-- ── Q&A Bank ───────────────────────────────────────────────────── -->
       <section id="tab-screening" class="tab-pane">
-        <p class="tab-description">Define custom keyword triggers & pre-saved answers for LinkedIn screening questions.</p>
-        <div id="qa-container" class="qa-list">
-          <!-- Dynamic Q&A items added here -->
-        </div>
-        <button id="add-qa-btn" class="btn btn-secondary full-width">+ Add Custom Screening Answer</button>
+        <p class="tab-desc">
+          Pre-save answers for LinkedIn screening questions.<br>
+          Keywords are matched against question labels (comma-separated).
+        </p>
+        <div id="qa-container" class="qa-list"></div>
+        <button id="add-qa-btn" class="btn btn-secondary btn-full">+ Add Screening Answer</button>
       </section>
 
-      <!-- Settings Tab -->
+      <!-- ── Logs ──────────────────────────────────────────────────────── -->
+      <section id="tab-logs" class="tab-pane">
+        <div class="logs-hero">
+          <div class="logs-big-count">
+            <span id="total-count">0</span>
+            <label>Total Applied</label>
+          </div>
+          <div class="logs-stats-row">
+            <div class="stat-chip">
+              <span id="stat-today">0</span>
+              <label>Today</label>
+            </div>
+            <div class="stat-chip">
+              <span id="stat-week">0</span>
+              <label>This Week</label>
+            </div>
+            <div class="stat-chip">
+              <span id="stat-month">0</span>
+              <label>This Month</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="logs-actions">
+          <button id="export-csv-btn" class="btn btn-primary">📥 Export CSV</button>
+          <button id="clear-logs-btn" class="btn btn-danger">🗑 Clear Logs</button>
+        </div>
+
+        <div id="logs-list" class="logs-list">
+          <div class="logs-empty">No applications logged yet.<br>Start applying with SpeedFill!</div>
+        </div>
+      </section>
+
+      <!-- ── Settings ──────────────────────────────────────────────────── -->
       <section id="tab-settings" class="tab-pane">
+
         <div class="setting-item">
           <div class="setting-info">
-            <label for="autoFillOnLoad">Auto-fill On Step Load</label>
-            <span class="subtext">Automatically fill fields when LinkedIn Easy Apply step renders</span>
+            <label for="autoFillOnLoad">Auto-fill On Modal Load</label>
+            <span class="subtext">Fill fields automatically when Easy Apply modal opens</span>
           </div>
-          <input type="checkbox" id="autoFillOnLoad" class="toggle-checkbox">
+          <input type="checkbox" id="autoFillOnLoad" class="toggle">
         </div>
 
         <div class="setting-item">
           <div class="setting-info">
-            <label for="pauseOnUnmatchedFields">🛑 Pause on Missing / Unfilled Data</label>
-            <span class="subtext">Stop auto-advancing if a required field has no matching answer</span>
+            <label for="pauseOnUnmatchedFields">🛑 Pause on Missing Required Fields</label>
+            <span class="subtext">Stop auto-advance if a required field has no answer</span>
           </div>
-          <input type="checkbox" id="pauseOnUnmatchedFields" class="toggle-checkbox">
+          <input type="checkbox" id="pauseOnUnmatchedFields" class="toggle">
         </div>
 
-        <div class="setting-item slider-setting">
+        <div class="setting-item setting-slider">
           <div class="setting-info">
-            <label for="stepDelayMs">⏱️ Human-Like Step Delay: <span id="stepDelayDisplay" class="badge-delay">500 ms</span></label>
-            <span class="subtext">Delay between steps (0 ms to 10,000 ms)</span>
+            <label for="stepDelayMs">⏱ Human-like Delay:
+              <span id="stepDelayDisplay" class="delay-badge">600 ms</span>
+            </label>
+            <span class="subtext">Pause between filling and clicking Next (0–10,000 ms)</span>
           </div>
-          <input type="range" id="stepDelayMs" min="0" max="10000" step="100" value="500" class="slider-input">
+          <input type="range" id="stepDelayMs" min="0" max="10000" step="100" value="600" class="slider">
         </div>
 
         <div class="setting-item">
           <div class="setting-info">
-            <label for="autoSelectResume">📄 Auto-Select Resume & Advance</label>
-            <span class="subtext">Automatically select uploaded resume card and advance</span>
+            <label for="autoSelectResume">📄 Auto-Select Resume</label>
+            <span class="subtext">Automatically pick your first uploaded resume</span>
           </div>
-          <input type="checkbox" id="autoSelectResume" class="toggle-checkbox">
+          <input type="checkbox" id="autoSelectResume" class="toggle">
         </div>
 
         <div class="setting-item">
           <div class="setting-info">
             <label for="autoAdvanceStep">⚡ Auto-Advance Steps</label>
-            <span class="subtext">Automatically click "Next" / "Review" on filled steps</span>
+            <span class="subtext">Auto-click "Next" on filled steps</span>
           </div>
-          <input type="checkbox" id="autoAdvanceStep" class="toggle-checkbox">
+          <input type="checkbox" id="autoAdvanceStep" class="toggle">
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item setting-danger">
           <div class="setting-info">
             <label for="autoSubmitApplication">🚀 Auto-Submit Application</label>
-            <span class="subtext">Automatically click "Submit application" on final step</span>
+            <span class="subtext">
+              <strong style="color:#f87171">⚠ Use with care.</strong>
+              Auto-clicks "Submit application" on the final review step.
+            </span>
           </div>
-          <input type="checkbox" id="autoSubmitApplication" class="toggle-checkbox">
+          <input type="checkbox" id="autoSubmitApplication" class="toggle">
         </div>
 
         <div class="setting-item">
           <div class="setting-info">
             <label for="highlightFilledFields">Highlight Auto-Filled Fields</label>
-            <span class="subtext">Show subtle emerald glow around auto-filled inputs</span>
+            <span class="subtext">Emerald glow on auto-filled inputs</span>
           </div>
-          <input type="checkbox" id="highlightFilledFields" class="toggle-checkbox">
+          <input type="checkbox" id="highlightFilledFields" class="toggle">
         </div>
 
-        <button id="reset-defaults-btn" class="btn btn-secondary full-width" style="margin-top: 10px; color: #f87171; border-color: rgba(248, 113, 113, 0.4);">🔄 Reset Profile to Default</button>
+        <button id="reset-defaults-btn" class="btn btn-danger-soft btn-full" style="margin-top:12px">
+          🔄 Reset Profile to Default
+        </button>
 
         <div class="shortcut-box">
-          <span>⌨️ Shortcut Hotkey: <strong>Alt + F</strong></span>
+          ⌨️ Hotkey: <strong>Alt + F</strong> — instant fill on active Easy Apply modal
         </div>
+
       </section>
+    </div><!-- /tab-content-container -->
 
-    </div>
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
 
-    <!-- Footer Toast -->
-    <div id="toast" class="toast">Profile Saved Successfully!</div>
-  </div>
-
+  </div><!-- /app-container -->
   <script src="popup.js"></script>
 </body>
 </html>

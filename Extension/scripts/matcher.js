@@ -1,154 +1,210 @@
 /**
- * LinkedIn SpeedFill - Matcher Module
+ * LinkedIn SpeedFill - Matcher Module v1.1
  * Sub-10ms Fuzzy Label & Field Identifier Engine
+ * Tailored to LinkedIn's Easy Apply modal DOM structure
  */
 
-window.SpeedFillMatcher = (function() {
-  
-  // Field dictionary mapping label keywords to profile paths
+window.SpeedFillMatcher = (function () {
+  'use strict';
+
+  // ─── Field Dictionary ───────────────────────────────────────────────────────
   const FIELD_MAPPINGS = [
-    // Current Role
-    { keys: ['current job title', 'current role', 'present position', 'recent job title', 'job title', 'title', 'role', 'designation', 'position'], path: 'work.currentRole.jobTitle' },
-    { keys: ['current company', 'present company', 'company name', 'company', 'employer', 'organization'], path: 'work.currentRole.company' },
-    { keys: ['years of experience', 'years experience', 'total experience', 'overall experience', 'how many years of experience'], path: 'work.currentRole.yearsExperience' },
-    { keys: ['current ctc', 'current salary', 'present salary'], path: 'work.currentRole.currentSalary' },
+    // ── Current Role ──────────────────────────────────────────────────────────
+    {
+      keys: ['current job title', 'current role', 'present position', 'job title',
+             'title', 'role', 'designation', 'position', 'your title'],
+      path: 'work.currentRole.jobTitle'
+    },
+    {
+      keys: ['current company', 'present company', 'company name', 'company',
+             'employer', 'organization', 'employer name'],
+      path: 'work.currentRole.company'
+    },
+    {
+      keys: ['years of experience', 'years experience', 'total experience',
+             'how many years', 'overall experience', 'work experience (years)',
+             'professional experience'],
+      path: 'work.currentRole.yearsExperience'
+    },
+    {
+      keys: ['current ctc', 'current salary', 'present salary', 'current compensation'],
+      path: 'work.currentRole.currentSalary'
+    },
 
-    // Target Role
-    { keys: ['target job title', 'desired role', 'target role', 'desired position', 'role applying for'], path: 'work.targetRole.jobTitle' },
-    { keys: ['expected ctc', 'expected salary', 'desired salary', 'salary expectation', 'compensation requirement'], path: 'work.targetRole.expectedSalary' },
-    { keys: ['notice period', 'notice', 'how soon can you start', 'availability', 'earliest start date'], path: 'work.targetRole.noticePeriod' },
-    { keys: ['target location', 'preferred location', 'desired city'], path: 'work.targetRole.targetLocation' },
+    // ── Target Role ───────────────────────────────────────────────────────────
+    {
+      keys: ['target job title', 'desired role', 'desired position', 'applying for'],
+      path: 'work.targetRole.jobTitle'
+    },
+    {
+      keys: ['expected ctc', 'expected salary', 'desired salary',
+             'salary expectation', 'compensation expectation', 'salary expected',
+             'what are your salary expectations'],
+      path: 'work.targetRole.expectedSalary'
+    },
+    {
+      keys: ['notice period', 'notice', 'how soon can you start',
+             'availability', 'earliest start', 'when can you start'],
+      path: 'work.targetRole.noticePeriod'
+    },
+    {
+      keys: ['target location', 'preferred location', 'desired city', 'preferred city'],
+      path: 'work.targetRole.targetLocation'
+    },
 
-    // Personal Details
-    { keys: ['first name', 'given name'], path: 'personal.firstName' },
-    { keys: ['last name', 'surname', 'family name'], path: 'personal.lastName' },
-    { keys: ['full name', 'name'], path: 'personal.fullName' },
-    { keys: ['email', 'email address'], path: 'personal.email' },
-    { keys: ['phone', 'mobile', 'contact number', 'phone number'], path: 'personal.phone' },
-    { keys: ['city', 'location', 'current city'], path: 'personal.city' },
-    { keys: ['state', 'province'], path: 'personal.state' },
-    { keys: ['country'], path: 'personal.country' },
-    { keys: ['linkedin', 'linkedin profile', 'linkedin url'], path: 'personal.linkedin' },
-    { keys: ['github', 'portfolio', 'website'], path: 'personal.github' },
+    // ── Personal ──────────────────────────────────────────────────────────────
+    { keys: ['first name', 'given name', 'firstname'],           path: 'personal.firstName' },
+    { keys: ['last name', 'surname', 'family name', 'lastname'], path: 'personal.lastName' },
+    { keys: ['full name', 'your name'],                          path: 'personal.fullName' },
+    { keys: ['email', 'email address', 'e-mail'],                path: 'personal.email' },
+    {
+      keys: ['phone', 'mobile', 'contact number', 'phone number',
+             'mobile number', 'cell'],
+      path: 'personal.phone'
+    },
+    { keys: ['city', 'current city', 'location city'],       path: 'personal.city' },
+    { keys: ['state', 'province', 'state/province'],          path: 'personal.state' },
+    { keys: ['country', 'country of residence'],              path: 'personal.country' },
+    {
+      keys: ['linkedin', 'linkedin profile', 'linkedin url', 'linkedin profile url'],
+      path: 'personal.linkedin'
+    },
+    { keys: ['github', 'portfolio', 'website', 'portfolio url'], path: 'personal.github' },
 
-    // Education
-    { keys: ['degree', 'highest degree', 'qualification', 'education level'], path: 'education.degree' },
-    { keys: ['field of study', 'major', 'stream', 'specialization'], path: 'education.major' },
-    { keys: ['university', 'college', 'school', 'institution'], path: 'education.university' },
-    { keys: ['graduation year', 'year of completion', 'passing year'], path: 'education.graduationYear' }
+    // ── Education ─────────────────────────────────────────────────────────────
+    {
+      keys: ['degree', 'highest degree', 'qualification', 'education level', 'highest qualification'],
+      path: 'education.degree'
+    },
+    {
+      keys: ['field of study', 'major', 'stream', 'specialization', 'discipline'],
+      path: 'education.major'
+    },
+    {
+      keys: ['university', 'college', 'school', 'institution', 'institute', 'alma mater'],
+      path: 'education.university'
+    },
+    {
+      keys: ['graduation year', 'year of completion', 'passing year', 'year of graduation', 'end year'],
+      path: 'education.graduationYear'
+    }
   ];
 
-  /**
-   * Check if element is a global search bar on LinkedIn header (e.g. global search input)
-   */
-  function isSearchInput(el) {
-    if (!el) return false;
-
-    // If inside Easy Apply modal or any dialog, it's NOT main header search
-    if (el.closest('.jobs-easy-apply-modal, .jobs-easy-apply-content, [role="dialog"], [data-test-modal]')) {
-      return false;
-    }
-
-    const role = el.getAttribute('role') || '';
-    const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
-    const classList = (el.className || '').toString().toLowerCase();
-
-    if (ariaLabel.includes('search') || classList.includes('search-global') || role === 'combobox') {
-      if (!el.closest('.jobs-easy-apply-modal, [role="dialog"]')) {
-        return true;
-      }
-    }
-
-    return false;
-  }
+  // ─── Helpers ────────────────────────────────────────────────────────────────
 
   /**
-   * Helper to safely extract nested value from object path
+   * Safely read a dotted path from an object, e.g. 'work.currentRole.jobTitle'
    */
   function getNestedValue(obj, path) {
     if (!obj || !path) return null;
-    const keys = path.split('.');
-    let current = obj;
-    for (const key of keys) {
-      if (current[key] === undefined || current[key] === null) return null;
-      current = current[key];
-    }
-    return current;
+    return path.split('.').reduce((cur, key) => (cur != null ? cur[key] : null), obj);
   }
 
   /**
-   * Find label text associated with a given input/select/fieldset element on LinkedIn
+   * Returns true if el is part of the LinkedIn top-bar global search widget
+   * (not inside an Easy Apply modal or any dialog).
+   */
+  function isGlobalSearchInput(el) {
+    if (!el) return false;
+    if (el.closest('.jobs-easy-apply-modal, .jobs-easy-apply-content, [data-test-modal], [role="dialog"]')) {
+      return false; // inside Easy Apply — always valid to fill
+    }
+    const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+    const cls = (el.className || '').toString().toLowerCase();
+    return ariaLabel.includes('search') || cls.includes('search-global') || cls.includes('global-search');
+  }
+
+  /**
+   * Collect all candidate label strings for an input element using LinkedIn's DOM conventions.
    */
   function getElementLabelText(el) {
-    let labelTexts = [];
+    const parts = [];
 
     // 1. Explicit <label for="id">
     if (el.id) {
-      const labelEl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (labelEl) labelTexts.push(labelEl.textContent);
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (lbl) parts.push(lbl.textContent);
     }
 
-    // 2. Parent <label> or wrapper label
+    // 2. Wrapping <label>
     const parentLabel = el.closest('label');
-    if (parentLabel) {
-      labelTexts.push(parentLabel.textContent);
-    }
+    if (parentLabel) parts.push(parentLabel.textContent);
 
-    // 3. Fieldset legend (very common in LinkedIn Easy Apply question groups)
+    // 3. Fieldset <legend> (LinkedIn Easy Apply wraps radio groups in fieldsets)
     const fieldset = el.closest('fieldset');
     if (fieldset) {
       const legend = fieldset.querySelector('legend');
-      if (legend) labelTexts.push(legend.textContent);
+      if (legend) parts.push(legend.textContent);
     }
 
-    // 4. Container question label (.jobs-easy-apply-form-element, .fb-dash-form-element, etc.)
-    const container = el.closest('.jobs-easy-apply-form-element, .fb-dash-form-element, .fb-form-element, div[data-test-form-element]');
+    // 4. LinkedIn Easy Apply form element containers
+    const containers = [
+      '.jobs-easy-apply-form-element',
+      '.fb-dash-form-element',
+      '.fb-form-element',
+      '[data-test-form-element]',
+      '.artdeco-text-input--container'
+    ];
+    const container = el.closest(containers.join(', '));
     if (container) {
-      const header = container.querySelector('label, legend, span.fb-form-element-label, span.t-14, .jobs-easy-apply-form-element__label');
-      if (header) labelTexts.push(header.textContent);
+      const header = container.querySelector(
+        'label, legend, .fb-form-element-label, .artdeco-text-input--label, ' +
+        '.jobs-easy-apply-form-element__label, span.t-14'
+      );
+      if (header) parts.push(header.textContent);
     }
 
-    // 5. Direct attributes: aria-label, aria-labelledby, placeholder, name, id
-    const ariaLabelledBy = el.getAttribute('aria-labelledby');
-    if (ariaLabelledBy) {
-      const target = document.getElementById(ariaLabelledBy);
-      if (target) labelTexts.push(target.textContent);
+    // 5. aria-labelledby
+    const labelledBy = el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      labelledBy.split(' ').forEach(id => {
+        const target = document.getElementById(id);
+        if (target) parts.push(target.textContent);
+      });
     }
 
-    if (el.getAttribute('aria-label')) labelTexts.push(el.getAttribute('aria-label'));
-    if (el.placeholder) labelTexts.push(el.placeholder);
-    if (el.name) labelTexts.push(el.name);
-    if (el.id) labelTexts.push(el.id);
+    // 6. Direct attributes
+    const attrs = ['aria-label', 'placeholder', 'name', 'id', 'data-test-text-entity-list-form-input'];
+    attrs.forEach(attr => {
+      const val = el.getAttribute(attr);
+      if (val) parts.push(val);
+    });
 
-    return labelTexts.join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
+    return parts.join(' ').toLowerCase().replace(/[*:]/g, '').replace(/\s+/g, ' ').trim();
   }
 
+  // ─── Public API ─────────────────────────────────────────────────────────────
+
   /**
-   * Match an input/select element to user profile value or Q&A bank
+   * Match an input/select element against profile data or Q&A bank.
+   * Returns { value, confidence, keyMatched } or null.
    */
   function matchField(el, profile) {
     if (!profile) return null;
-    if (isSearchInput(el)) return null;
+    if (isGlobalSearchInput(el)) return null;
 
     const labelText = getElementLabelText(el);
     if (!labelText) return null;
 
-    // Check direct dictionary mappings
+    // 1. Dictionary mappings
     for (const mapping of FIELD_MAPPINGS) {
       for (const key of mapping.keys) {
         if (labelText.includes(key)) {
           const val = getNestedValue(profile, mapping.path);
-          if (val !== null && val !== undefined) return { value: val, confidence: 0.95, keyMatched: key };
+          if (val !== null && val !== undefined && val !== '') {
+            return { value: String(val), confidence: 0.95, keyMatched: key };
+          }
         }
       }
     }
 
-    // Check screening Q&A bank
-    if (profile.screening && Array.isArray(profile.screening)) {
+    // 2. Q&A screening bank
+    if (Array.isArray(profile.screening)) {
       for (const item of profile.screening) {
-        const keywords = item.keywords.toLowerCase().split(',').map(k => k.trim());
+        if (!item.keywords) continue;
+        const keywords = item.keywords.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
         for (const kw of keywords) {
-          if (kw && labelText.includes(kw)) {
+          if (labelText.includes(kw)) {
             return { value: item.answer, confidence: 0.85, keyMatched: kw };
           }
         }
@@ -158,9 +214,5 @@ window.SpeedFillMatcher = (function() {
     return null;
   }
 
-  return {
-    matchField,
-    getElementLabelText,
-    isSearchInput
-  };
+  return { matchField, getElementLabelText, isGlobalSearchInput };
 })();
