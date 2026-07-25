@@ -1,10 +1,11 @@
 /**
- * LinkedIn SpeedFill – Auto-Fill & Manual "Save to SpeedFill" Engine v2.2.0
- * Features:
- *  - Auto-fills inputs, dropdowns, radio groups, checkboxes, resumes
- *  - Auto-advances steps (Next -> Review -> Submit)
- *  - 💾 "Save to SpeedFill" Button: Injects a sleek button below any unfilled/unmatched input
- *    or radio group (or waits for Enter key), so answers are saved ONLY when you decide!
+ * LinkedIn SpeedFill – Auto-Fill & Manual "Save to SpeedFill" Engine v2.3.0
+ *
+ * Safe Filter Guarding:
+ *  - STRICTLY SCOPED to Easy Apply modals (.jobs-easy-apply-modal)
+ *  - COMPLETELY INACTIVE when user opens LinkedIn Search Filters ("Date Posted",
+ *    "Experience Level", "All Filters", "Company", etc.)
+ *  - NEVER clicks "Show results" or alters filter checkboxes/radios
  */
 
 (function () {
@@ -42,6 +43,46 @@
         LOG('Profile updated in real-time');
       }
     });
+  }
+
+  // ─── Filter Modal Guard ─────────────────────────────────────────────────────
+  /**
+   * Returns true if an element belongs to LinkedIn's search filter widgets
+   */
+  function isFilterElement(el) {
+    if (!el) return false;
+    if (el.closest('.search-reusables__all-filters-modal, .search-reusables__filter-binary-toggle, [class*="filter-panel"], [class*="filter-modal"], [data-test-search-filter]')) {
+      return true;
+    }
+    const cls  = (el.className || '').toString().toLowerCase();
+    const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+    return cls.includes('search-reusable') || aria.includes('filter');
+  }
+
+  /**
+   * Strictly find the Easy Apply modal dialog. Returns null if user is on filter screens.
+   */
+  function findEasyApplyModal() {
+    // Strategy 1: Specific Easy Apply modal container
+    const modal = document.querySelector('.jobs-easy-apply-modal, .jobs-easy-apply-content');
+    if (modal && !isFilterElement(modal)) return modal;
+
+    // Strategy 2: Check all dialogs, strictly excluding Filter modals
+    const dialogs = document.querySelectorAll('div[role="dialog"], .artdeco-modal');
+    for (const dialog of dialogs) {
+      if (isFilterElement(dialog)) continue;
+
+      const ariaLabel   = (dialog.getAttribute('aria-label') || '').toLowerCase();
+      const heading     = dialog.querySelector('h1, h2, h3, h4, [class*="title"]');
+      const headingText = (heading?.textContent || '').toLowerCase();
+
+      if (ariaLabel.includes('easy apply') || ariaLabel.includes('apply to') ||
+          headingText.includes('easy apply') || headingText.includes('apply to')) {
+        return dialog;
+      }
+    }
+
+    return null;
   }
 
   // ─── Native Event Dispatchers (React state update) ──────────────────────────
@@ -104,17 +145,17 @@
     return false;
   }
 
-  // ─── Smart Radio & Screening Question Handler ──────────────────────────────
-  function handleRadioGroups() {
-    if (!userProfile) return 0;
+  // ─── Form Processor (Strictly scoped to modal) ─────────────────────────────
+
+  function handleRadioGroups(modal) {
+    if (!userProfile || !modal) return 0;
 
     let filledCount = 0;
-    const containers = document.querySelectorAll('fieldset, [role="radiogroup"], .fb-dash-form-element, [class*="form-element"]');
+    const containers = modal.querySelectorAll('fieldset, [role="radiogroup"], .fb-dash-form-element, [class*="form-element"]');
 
     containers.forEach(container => {
       const radioInputs = Array.from(container.querySelectorAll('input[type="radio"]'));
       if (radioInputs.length === 0) return;
-
       if (radioInputs.some(r => r.checked)) return;
 
       const headerEl = container.querySelector('legend, h1, h2, h3, h4, label, [class*="label"], span.t-14');
@@ -165,8 +206,10 @@
     return filledCount;
   }
 
-  function handleResumeStep() {
-    const resumeCards = Array.from(document.querySelectorAll(
+  function handleResumeStep(modal) {
+    if (!modal) return false;
+
+    const resumeCards = Array.from(modal.querySelectorAll(
       '.jobs-resume-picker input[type="radio"]:not(:checked), ' +
       '[data-test-resume-card] input[type="radio"]:not(:checked), ' +
       'input[name="resume"]:not(:checked)'
@@ -178,7 +221,7 @@
       return true;
     }
 
-    const useBtn = document.querySelector('button[aria-label*="Use"], button[aria-label*="Select resume"]');
+    const useBtn = modal.querySelector('button[aria-label*="Use"], button[aria-label*="Select resume"]');
     if (useBtn) {
       useBtn.click();
       return true;
@@ -187,8 +230,9 @@
     return false;
   }
 
-  function handleCheckboxes() {
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]:not(:checked)');
+  function handleCheckboxes(modal) {
+    if (!modal) return;
+    const checkboxes = modal.querySelectorAll('input[type="checkbox"]:not(:checked)');
     checkboxes.forEach(cb => {
       const isRequired = cb.required || cb.getAttribute('aria-required') === 'true';
       const labelText  = (cb.labels?.[0]?.textContent || cb.closest('label')?.textContent || '').toLowerCase();
@@ -200,14 +244,13 @@
     });
   }
 
-  // ─── 💾 INJECT "SAVE TO SPEEDFILL" BUTTON BELOW UNMATCHED FIELDS ────────────
+  // ─── 💾 INJECT "SAVE TO SPEEDFILL" BUTTON (Inside Modal Only) ───────────────
   function injectSaveButton(container, inputEl = null) {
     if (!container || container.dataset.speedfillSaveInjected === 'true') return;
     container.dataset.speedfillSaveInjected = 'true';
 
     const targetInput = inputEl || container;
 
-    // Do not inject button if field is already recognized/matched
     const match = window.SpeedFillMatcher?.matchField(targetInput, userProfile);
     if (match !== null && match !== undefined && match.value) return;
 
@@ -277,7 +320,6 @@
       executeSave();
     });
 
-    // Support Enter key press inside input box
     if (targetInput && targetInput.tagName?.toLowerCase() !== 'select' && targetInput.type !== 'radio') {
       targetInput.addEventListener('keydown', e => {
         if (e.key === 'Enter') {
@@ -287,7 +329,6 @@
       });
     }
 
-    // Append button neatly below input wrapper or beside fieldset header
     if (inputEl && inputEl.type === 'radio') {
       const header = container.querySelector('legend, h1, h2, h3, h4, .fb-form-element-label');
       if (header) {
@@ -305,8 +346,10 @@
     }
   }
 
-  function attachSaveButtonsToUnmatchedFields() {
-    const inputs = document.querySelectorAll(
+  function attachSaveButtonsToUnmatchedFields(modal) {
+    if (!modal) return;
+
+    const inputs = modal.querySelectorAll(
       'input[type="text"], input[type="number"], input[type="email"], input[type="tel"], textarea, select'
     );
     inputs.forEach(input => {
@@ -314,7 +357,7 @@
       injectSaveButton(input);
     });
 
-    const radioContainers = document.querySelectorAll('fieldset, [role="radiogroup"], .fb-dash-form-element');
+    const radioContainers = modal.querySelectorAll('fieldset, [role="radiogroup"], .fb-dash-form-element');
     radioContainers.forEach(container => {
       const firstRadio = container.querySelector('input[type="radio"]');
       if (firstRadio) {
@@ -335,9 +378,11 @@
     setTimeout(() => { if (toast) toast.style.opacity = '0'; }, 2600);
   }
 
-  // ─── STEP NAVIGATOR: Click Next / Review / Submit ───────────────────────────
-  function clickContinueButton() {
-    const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a[role="button"]'));
+  // ─── STEP NAVIGATOR: Click Next / Review / Submit (Modal-Scoped Only) ────────
+  function clickContinueButton(modal) {
+    if (!modal) return false;
+
+    const buttons = Array.from(modal.querySelectorAll('button, input[type="button"], input[type="submit"], a[role="button"]'));
 
     const continueBtn = buttons.find(b => {
       if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
@@ -345,7 +390,8 @@
       const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase().trim();
       const text      = (b.textContent || '').toLowerCase().trim();
 
-      if (ariaLabel === 'dismiss' || ariaLabel.includes('close modal') || text === 'dismiss') return false;
+      // STRICTLY EXCLUDE: Close/Dismiss buttons AND Filter "Show results" / "Apply" buttons
+      if (ariaLabel === 'dismiss' || ariaLabel.includes('close modal') || text === 'dismiss' || text.includes('show') || text.includes('results')) return false;
 
       return (
         ariaLabel === 'continue to next step' ||
@@ -369,8 +415,10 @@
     return false;
   }
 
-  function clickSubmitButton() {
-    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+  function clickSubmitButton(modal) {
+    if (!modal) return false;
+
+    const buttons = Array.from(modal.querySelectorAll('button, input[type="submit"]'));
 
     const submitBtn = buttons.find(b => {
       if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
@@ -414,8 +462,14 @@
     });
   }
 
-  // ─── CORE FORM FILLING LOOP ────────────────────────────────────────────────
+  // ─── CORE FORM FILLING LOOP (Guarded & Modal Scoped) ───────────────────────
   function fillCurrentForm() {
+    // 🛡️ STRICT GUARD: Is an Easy Apply modal open right now?
+    const modal = findEasyApplyModal();
+    if (!modal) {
+      return 0; // COMPLETELY INACTIVE on LinkedIn filters & normal browsing
+    }
+
     if (!userProfile) {
       loadProfile(() => fillCurrentForm());
       return 0;
@@ -423,17 +477,17 @@
 
     let filledCount = 0;
 
-    // 1. Handle Resume step
-    const handledResume = handleResumeStep();
+    // 1. Handle Resume step inside modal
+    const handledResume = handleResumeStep(modal);
 
-    // 2. Handle Checkboxes
-    handleCheckboxes();
+    // 2. Handle Checkboxes inside modal
+    handleCheckboxes(modal);
 
-    // 3. Handle Radio groups
-    filledCount += handleRadioGroups();
+    // 3. Handle Radio groups inside modal
+    filledCount += handleRadioGroups(modal);
 
-    // 4. Handle Text inputs, textarea, numbers
-    const inputs = document.querySelectorAll(
+    // 4. Handle Text inputs, textarea, numbers inside modal
+    const inputs = modal.querySelectorAll(
       'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input:not([type]), textarea'
     );
     inputs.forEach(input => {
@@ -444,8 +498,8 @@
       }
     });
 
-    // 5. Handle Select dropdowns
-    const selects = document.querySelectorAll('select');
+    // 5. Handle Select dropdowns inside modal
+    const selects = modal.querySelectorAll('select');
     selects.forEach(select => {
       if (select.offsetWidth === 0 && select.offsetHeight === 0) return;
       const match = window.SpeedFillMatcher?.matchField(select, userProfile);
@@ -458,33 +512,35 @@
       LOG(`Auto-filled ${filledCount} field(s) on current step`);
     }
 
-    // 6. Inject "Save to SpeedFill" buttons for unmatched fields
-    attachSaveButtonsToUnmatchedFields();
+    // 6. Inject "Save to SpeedFill" buttons for unmatched fields inside modal
+    attachSaveButtonsToUnmatchedFields(modal);
 
     const stepDelay = userProfile?.settings?.stepDelayMs ?? 200;
 
-    // 7. Check for Submit button first
+    // 7. Check for Submit button inside modal first
     if (userProfile?.settings?.autoSubmitApplication !== false) {
-      const submitted = clickSubmitButton();
+      const submitted = clickSubmitButton(modal);
       if (submitted) return filledCount;
     }
 
-    // 8. Auto-advance intermediate steps (Next / Continue / Review)
+    // 8. Auto-advance intermediate steps inside modal (Next / Continue / Review)
     if (userProfile?.settings?.autoAdvanceStep !== false) {
-      setTimeout(clickContinueButton, stepDelay);
+      setTimeout(() => clickContinueButton(modal), stepDelay);
     }
 
     return filledCount;
   }
 
-  // ─── FAST OBSERVER & EVENT LISTENERS ───────────────────────────────────────
+  // ─── DOM OBSERVER & EVENT LISTENERS ─────────────────────────────────────────
   function setupDOMObserver() {
     if (isObserverActive) return;
 
     const observer = new MutationObserver(() => {
       clearTimeout(window._speedfillTimer);
       window._speedfillTimer = setTimeout(() => {
-        if (userProfile?.settings?.autoFillOnLoad !== false) {
+        // Guard check: only run if an Easy Apply modal is actually present
+        const modal = findEasyApplyModal();
+        if (modal && userProfile?.settings?.autoFillOnLoad !== false) {
           fillCurrentForm();
         }
       }, 50);
@@ -494,10 +550,13 @@
     isObserverActive = true;
   }
 
-  // Trigger fill when user clicks anywhere inside an Easy Apply modal or button
+  // Click listener for Easy Apply button triggers
   document.addEventListener('click', e => {
     const target = e.target;
     if (!target) return;
+
+    // Do NOT trigger if user clicked inside a LinkedIn Filter panel
+    if (isFilterElement(target)) return;
 
     const isApplyBtn = target.textContent?.includes('Easy Apply') ||
                        target.getAttribute('aria-label')?.includes('Easy Apply') ||
@@ -510,7 +569,8 @@
       });
     }
 
-    if (target.matches('input[type="radio"], input[type="checkbox"], option')) {
+    const modal = findEasyApplyModal();
+    if (modal && target.matches('input[type="radio"], input[type="checkbox"], option')) {
       setTimeout(fillCurrentForm, 150);
     }
   }, true);
@@ -529,10 +589,13 @@
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'TRIGGER_AUTOFILL') {
         LOG('Alt+F hotkey triggered');
-        if (userProfile) {
-          fillCurrentForm();
-        } else {
-          loadProfile(() => fillCurrentForm());
+        const modal = findEasyApplyModal();
+        if (modal) {
+          if (userProfile) {
+            fillCurrentForm();
+          } else {
+            loadProfile(() => fillCurrentForm());
+          }
         }
         sendResponse({ status: 'OK' });
         return true;
@@ -542,10 +605,12 @@
 
   // ─── BOOT ──────────────────────────────────────────────────────────────────
   function init() {
-    LOG('SpeedFill Engine v2.2.0 (Manual Save Button Mode) initialized');
+    LOG('SpeedFill Engine v2.3.0 (Filter-Guarded Easy Apply Mode) initialized');
     loadProfile(() => {
       setupDOMObserver();
-      fillCurrentForm();
+      // Only fill if an Easy Apply modal is already active
+      const modal = findEasyApplyModal();
+      if (modal) fillCurrentForm();
     });
   }
 
