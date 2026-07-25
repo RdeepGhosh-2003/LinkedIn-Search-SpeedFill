@@ -1,7 +1,7 @@
 /**
- * LinkedIn SpeedFill - Matcher Module v1.1
+ * LinkedIn SpeedFill - Matcher Module v1.2.1
  * Sub-10ms Fuzzy Label & Field Identifier Engine
- * Tailored to LinkedIn's Easy Apply modal DOM structure
+ * Tailored to LinkedIn's Easy Apply modal DOM structure (2026 DOM verified)
  */
 
 window.SpeedFillMatcher = (function () {
@@ -56,15 +56,14 @@ window.SpeedFillMatcher = (function () {
     { keys: ['first name', 'given name', 'firstname'],           path: 'personal.firstName' },
     { keys: ['last name', 'surname', 'family name', 'lastname'], path: 'personal.lastName' },
     { keys: ['full name', 'your name'],                          path: 'personal.fullName' },
-    { keys: ['email', 'email address', 'e-mail'],                path: 'personal.email' },
+    { keys: ['email address', 'email', 'e-mail'],                path: 'personal.email' },
     {
-      keys: ['phone', 'mobile', 'contact number', 'phone number',
-             'mobile number', 'cell'],
+      keys: ['mobile phone number', 'mobile phone', 'phone number', 'contact number', 'phone', 'mobile', 'cell'],
       path: 'personal.phone'
     },
     { keys: ['city', 'current city', 'location city'],       path: 'personal.city' },
     { keys: ['state', 'province', 'state/province'],          path: 'personal.state' },
-    { keys: ['country', 'country of residence'],              path: 'personal.country' },
+    { keys: ['country', 'country of residence', 'phone country code', 'country code'], path: 'personal.country' },
     {
       keys: ['linkedin', 'linkedin profile', 'linkedin url', 'linkedin profile url'],
       path: 'personal.linkedin'
@@ -92,52 +91,45 @@ window.SpeedFillMatcher = (function () {
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
-  /**
-   * Safely read a dotted path from an object, e.g. 'work.currentRole.jobTitle'
-   */
   function getNestedValue(obj, path) {
     if (!obj || !path) return null;
     return path.split('.').reduce((cur, key) => (cur != null ? cur[key] : null), obj);
   }
 
-  /**
-   * Returns true if el is part of the LinkedIn top-bar global search widget
-   * (not inside an Easy Apply modal or any dialog).
-   */
   function isGlobalSearchInput(el) {
     if (!el) return false;
     if (el.closest('.jobs-easy-apply-modal, .jobs-easy-apply-content, [data-test-modal], [role="dialog"]')) {
-      return false; // inside Easy Apply — always valid to fill
+      return false;
     }
     const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
     const cls = (el.className || '').toString().toLowerCase();
     return ariaLabel.includes('search') || cls.includes('search-global') || cls.includes('global-search');
   }
 
-  /**
-   * Collect all candidate label strings for an input element using LinkedIn's DOM conventions.
-   */
   function getElementLabelText(el) {
     const parts = [];
 
     // 1. Explicit <label for="id">
     if (el.id) {
-      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lbl) parts.push(lbl.textContent);
+      try {
+        const root = el.getRootNode ? el.getRootNode() : document;
+        const lbl = root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lbl) parts.push(lbl.textContent);
+      } catch(e) {}
     }
 
     // 2. Wrapping <label>
     const parentLabel = el.closest('label');
     if (parentLabel) parts.push(parentLabel.textContent);
 
-    // 3. Fieldset <legend> (LinkedIn Easy Apply wraps radio groups in fieldsets)
+    // 3. Fieldset <legend>
     const fieldset = el.closest('fieldset');
     if (fieldset) {
       const legend = fieldset.querySelector('legend');
       if (legend) parts.push(legend.textContent);
     }
 
-    // 4. LinkedIn Easy Apply form element containers (multiple UI generations)
+    // 4. LinkedIn Easy Apply form element containers
     const containers = [
       '.jobs-easy-apply-form-element',
       '.fb-dash-form-element',
@@ -157,7 +149,7 @@ window.SpeedFillMatcher = (function () {
       if (header) parts.push(header.textContent);
     }
 
-    // 5. Walk up through host elements if inside a shadow root
+    // 5. Walk up host elements if inside shadow root
     let node = el;
     for (let i = 0; i < 6; i++) {
       if (!node.parentElement && node.parentNode instanceof ShadowRoot) {
@@ -175,17 +167,28 @@ window.SpeedFillMatcher = (function () {
       }
     }
 
-    // 5. aria-labelledby
+    // 6. aria-labelledby
     const labelledBy = el.getAttribute('aria-labelledby');
     if (labelledBy) {
+      const root = el.getRootNode ? el.getRootNode() : document;
       labelledBy.split(' ').forEach(id => {
-        const target = document.getElementById(id);
-        if (target) parts.push(target.textContent);
+        try {
+          const target = root.getElementById(id);
+          if (target) parts.push(target.textContent);
+        } catch(e) {}
       });
     }
 
-    // 6. Direct attributes
-    const attrs = ['aria-label', 'placeholder', 'name', 'id', 'data-test-text-entity-list-form-input'];
+    // 7. Direct attributes
+    const attrs = [
+      'aria-label',
+      'placeholder',
+      'name',
+      'id',
+      'data-test-text-entity-list-form-input',
+      'data-test-single-typeahead-entity-form-input',
+      'data-test-text-entity-list-form-select'
+    ];
     attrs.forEach(attr => {
       const val = el.getAttribute(attr);
       if (val) parts.push(val);
@@ -196,10 +199,6 @@ window.SpeedFillMatcher = (function () {
 
   // ─── Public API ─────────────────────────────────────────────────────────────
 
-  /**
-   * Match an input/select element against profile data or Q&A bank.
-   * Returns { value, confidence, keyMatched } or null.
-   */
   function matchField(el, profile) {
     if (!profile) return null;
     if (isGlobalSearchInput(el)) return null;
