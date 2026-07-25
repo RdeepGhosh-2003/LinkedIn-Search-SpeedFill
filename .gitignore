@@ -1,0 +1,16 @@
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node modules & logs
+node_modules/
+*.log
+npm-debug.log*
+
+# Environment & Build output
+.env
+.env.local
+dist/
+build/
+*.zip

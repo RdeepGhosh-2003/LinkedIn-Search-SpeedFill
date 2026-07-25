@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkedIn SpeedFill Profile</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo">
+        <span class="icon">⚡</span>
+        <h1>SpeedFill <span class="badge">LinkedIn</span></h1>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button id="theme-toggle-btn" class="btn btn-secondary" style="padding: 8px; border-radius: 50%;" title="Toggle Light/Dark Theme">🌙</button>
+        <button id="save-btn" class="btn btn-primary">Save Profile</button>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="tab-work">💼 Roles</button>
+      <button class="tab-btn" data-tab="tab-personal">👤 Personal</button>
+      <button class="tab-btn" data-tab="tab-education">🎓 Education</button>
+      <button class="tab-btn" data-tab="tab-screening">❓ Q&A Bank</button>
+      <button class="tab-btn" data-tab="tab-settings">⚙️ Settings</button>
+    </nav>
+
+    <!-- Tab Contents -->
+    <div class="tab-content-container">
+      
+      <!-- Roles Tab -->
+      <section id="tab-work" class="tab-pane active">
+        <!-- Current Role -->
+        <div class="role-section-card">
+          <div class="role-section-header">
+            <h3>🏢 Current Role</h3>
+          </div>
+          <div class="form-group">
+            <label for="currentJobTitle">Current Job Title</label>
+            <input type="text" id="currentJobTitle" placeholder="e.g. Software Engineer">
+          </div>
+          <div class="form-group">
+            <label for="currentCompany">Current Company</label>
+            <input type="text" id="currentCompany" placeholder="e.g. Acme Corporation">
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="yearsExperience">Years of Experience</label>
+              <input type="text" id="yearsExperience" placeholder="e.g. 3">
+            </div>
+            <div class="form-group">
+              <label for="currentSalary">Current CTC (Per Annum)</label>
+              <input type="text" id="currentSalary" placeholder="e.g. 500000">
+            </div>
+          </div>
+        </div>
+
+        <!-- Target Role -->
+        <div class="role-section-card target-card">
+          <div class="role-section-header">
+            <h3>🎯 Target Role</h3>
+          </div>
+          <div class="form-group">
+            <label for="targetJobTitle">Target Job Title</label>
+            <input type="text" id="targetJobTitle" placeholder="e.g. Senior Software Engineer">
+          </div>
+          <div class="form-group">
+            <label for="targetLocation">Preferred Target Location</label>
+            <input type="text" id="targetLocation" placeholder="e.g. Sample City">
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="noticePeriod">Notice Period</label>
+              <input type="text" id="noticePeriod" placeholder="e.g. 30 Days">
+            </div>
+            <div class="form-group">
+              <label for="expectedSalary">Expected CTC (Per Annum)</label>
+              <input type="text" id="expectedSalary" placeholder="e.g. 700000">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Personal Tab -->
+      <section id="tab-personal" class="tab-pane">
+        <div class="form-group">
+          <label for="fullName">Full Name</label>
+          <input type="text" id="fullName" placeholder="e.g. John Doe">
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="firstName">First Name</label>
+            <input type="text" id="firstName" placeholder="e.g. John">
+          </div>
+          <div class="form-group">
+            <label for="lastName">Last Name</label>
+            <input type="text" id="lastName" placeholder="e.g. Doe">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="email">Email Address</label>
+            <input type="email" id="email" placeholder="e.g. john.doe@example.com">
+          </div>
+          <div class="form-group">
+            <label for="phone">Phone Number</label>
+            <input type="tel" id="phone" placeholder="e.g. 1234567890">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="city">City</label>
+            <input type="text" id="city" placeholder="Sample City">
+          </div>
+          <div class="form-group">
+            <label for="state">State / Province</label>
+            <input type="text" id="state" placeholder="e.g. CA">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="linkedin">LinkedIn Profile URL</label>
+          <input type="url" id="linkedin" placeholder="e.g. linkedin.com/in/johndoe">
+        </div>
+      </section>
+
+      <!-- Education Tab -->
+      <section id="tab-education" class="tab-pane">
+        <div class="form-group">
+          <label for="degree">Highest Degree / Qualification</label>
+          <input type="text" id="degree" placeholder="e.g. Bachelor of Science">
+        </div>
+
+        <div class="form-group">
+          <label for="major">Field of Study / Major</label>
+          <input type="text" id="major" placeholder="e.g. Computer Science">
+        </div>
+
+        <div class="form-group">
+          <label for="university">University / Institute</label>
+          <input type="text" id="university" placeholder="e.g. Sample University">
+        </div>
+
+        <div class="form-group">
+          <label for="graduationYear">Graduation Year</label>
+          <input type="text" id="graduationYear" placeholder="e.g. 2022">
+        </div>
+      </section>
+
+      <!-- Screening Q&A Tab -->
+      <section id="tab-screening" class="tab-pane">
+        <p class="tab-description">Define custom keyword triggers & pre-saved answers for LinkedIn screening questions.</p>
+        <div id="qa-container" class="qa-list">
+          <!-- Dynamic Q&A items added here -->
+        </div>
+        <button id="add-qa-btn" class="btn btn-secondary full-width">+ Add Custom Screening Answer</button>
+      </section>
+
+      <!-- Settings Tab -->
+      <section id="tab-settings" class="tab-pane">
+        <div class="setting-item">
+          <div class="setting-info">
+            <label for="autoFillOnLoad">Auto-fill On Step Load</label>
+            <span class="subtext">Automatically fill fields when LinkedIn Easy Apply step renders</span>
+          </div>
+          <input type="checkbox" id="autoFillOnLoad" class="toggle-checkbox">
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <label for="pauseOnUnmatchedFields">🛑 Pause on Missing / Unfilled Data</label>
+            <span class="subtext">Stop auto-advancing if a required field has no matching answer</span>
+          </div>
+          <input type="checkbox" id="pauseOnUnmatchedFields" class="toggle-checkbox">
+        </div>
+
+        <div class="setting-item slider-setting">
+          <div class="setting-info">
+            <label for="stepDelayMs">⏱️ Human-Like Step Delay: <span id="stepDelayDisplay" class="badge-delay">500 ms</span></label>
+            <span class="subtext">Delay between steps (0 ms to 10,000 ms)</span>
+          </div>
+          <input type="range" id="stepDelayMs" min="0" max="10000" step="100" value="500" class="slider-input">
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <label for="autoSelectResume">📄 Auto-Select Resume & Advance</label>
+            <span class="subtext">Automatically select uploaded resume card and advance</span>
+          </div>
+          <input type="checkbox" id="autoSelectResume" class="toggle-checkbox">
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <label for="autoAdvanceStep">⚡ Auto-Advance Steps</label>
+            <span class="subtext">Automatically click "Next" / "Review" on filled steps</span>
+          </div>
+          <input type="checkbox" id="autoAdvanceStep" class="toggle-checkbox">
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <label for="autoSubmitApplication">🚀 Auto-Submit Application</label>
+            <span class="subtext">Automatically click "Submit application" on final step</span>
+          </div>
+          <input type="checkbox" id="autoSubmitApplication" class="toggle-checkbox">
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <label for="highlightFilledFields">Highlight Auto-Filled Fields</label>
+            <span class="subtext">Show subtle emerald glow around auto-filled inputs</span>
+          </div>
+          <input type="checkbox" id="highlightFilledFields" class="toggle-checkbox">
+        </div>
+
+        <button id="reset-defaults-btn" class="btn btn-secondary full-width" style="margin-top: 10px; color: #f87171; border-color: rgba(248, 113, 113, 0.4);">🔄 Reset Profile to Default</button>
+
+        <div class="shortcut-box">
+          <span>⌨️ Shortcut Hotkey: <strong>Alt + F</strong></span>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Footer Toast -->
+    <div id="toast" class="toast">Profile Saved Successfully!</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

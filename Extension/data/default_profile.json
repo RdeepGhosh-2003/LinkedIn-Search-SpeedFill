@@ -1,0 +1,67 @@
+{
+  "personal": {
+    "fullName": "John Doe",
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john.doe@example.com",
+    "phone": "1234567890",
+    "city": "Sample City",
+    "state": "Sample State",
+    "country": "Sample Country",
+    "linkedin": "https://linkedin.com/in/example",
+    "github": "https://github.com/example"
+  },
+  "work": {
+    "currentRole": {
+      "jobTitle": "Software Engineer",
+      "company": "Acme Corporation",
+      "yearsExperience": "3",
+      "currentSalary": "500000"
+    },
+    "targetRole": {
+      "jobTitle": "Senior Software Engineer",
+      "targetLocation": "Sample City",
+      "expectedSalary": "700000",
+      "noticePeriod": "30 Days"
+    }
+  },
+  "education": {
+    "degree": "Bachelor of Science",
+    "major": "Computer Science",
+    "university": "Sample University",
+    "graduationYear": "2022"
+  },
+  "screening": [
+    {
+      "keywords": "javascript, python, react, node, programming, software engineer",
+      "answer": "Yes, 3+ years experience with software development and programming."
+    },
+    {
+      "keywords": "relocate, relocation, willing to relocate",
+      "answer": "Yes"
+    },
+    {
+      "keywords": "notice period, availability, start date, how soon",
+      "answer": "30 Days"
+    },
+    {
+      "keywords": "authorized, legal, work permit, sponsorship, require sponsorship",
+      "answer": "Yes"
+    },
+    {
+      "keywords": "salary, expected ctc, compensation",
+      "answer": "700000"
+    }
+  ],
+  "settings": {
+    "autoFillOnLoad": true,
+    "pauseOnUnmatchedFields": true,
+    "stepDelayMs": 500,
+    "autoSelectResume": true,
+    "autoAdvanceStep": true,
+    "autoSubmitApplication": true,
+    "highlightFilledFields": true,
+    "autoQueueSearchJobs": false,
+    "maxJobsToApply": 10
+  }
+}
