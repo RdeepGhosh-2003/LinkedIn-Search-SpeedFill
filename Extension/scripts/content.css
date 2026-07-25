@@ -1,4 +1,4 @@
-/* ─── LinkedIn SpeedFill – Injected Styles v2.0 ─────────────────────────── */
+/* ─── LinkedIn SpeedFill – Injected Styles v2.2 ─────────────────────────── */
 
 /* Auto-filled field: emerald glow */
 .speedfill-highlight {
@@ -19,6 +19,38 @@
 @keyframes sf-pulse {
   0%, 100% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
   50%       { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.35); }
+}
+
+/* Injected "💾 Save to SpeedFill" Button below inputs & questions (Indeed Style) */
+.speedfill-save-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  margin-top: 6px !important;
+  margin-bottom: 6px !important;
+  padding: 5px 12px !important;
+  background: #0a66c2 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 16px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 6px rgba(10, 102, 194, 0.3) !important;
+  transition: all 0.2s ease !important;
+  z-index: 100 !important;
+}
+
+.speedfill-save-btn:hover {
+  background: #004182 !important;
+  transform: translateY(-1px) !important;
+}
+
+.speedfill-save-btn.saved {
+  background: #059669 !important;
+  color: #ffffff !important;
+  cursor: default !important;
 }
 
 /* Learn-on-the-Go Toast Notification */

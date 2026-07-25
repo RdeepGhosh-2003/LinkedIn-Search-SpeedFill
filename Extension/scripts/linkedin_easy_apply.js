@@ -1,6 +1,10 @@
 /**
- * LinkedIn SpeedFill – Auto-Fill & Step Navigator Engine v2.1.0
- * Architecture aligned 100% with the ultra-fast Indeed SpeedFill engine.
+ * LinkedIn SpeedFill – Auto-Fill & Manual "Save to SpeedFill" Engine v2.2.0
+ * Features:
+ *  - Auto-fills inputs, dropdowns, radio groups, checkboxes, resumes
+ *  - Auto-advances steps (Next -> Review -> Submit)
+ *  - 💾 "Save to SpeedFill" Button: Injects a sleek button below any unfilled/unmatched input
+ *    or radio group (or waits for Enter key), so answers are saved ONLY when you decide!
  */
 
 (function () {
@@ -8,10 +12,8 @@
 
   const LOG = (...args) => console.log('[SpeedFill]', ...args);
 
-  let userProfile        = null;
-  let isObserverActive   = false;
-  let stepTimer          = null;
-  let autoLoopInterval   = null;
+  let userProfile      = null;
+  let isObserverActive = false;
 
   // ─── Profile Loading & Storage Watcher ──────────────────────────────────────
   function loadProfile(callback) {
@@ -33,7 +35,6 @@
     });
   }
 
-  // Real-time sync when user updates profile in popup
   if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes, namespace) => {
       if (namespace === 'local' && changes.userProfile) {
@@ -114,7 +115,6 @@
       const radioInputs = Array.from(container.querySelectorAll('input[type="radio"]'));
       if (radioInputs.length === 0) return;
 
-      // Skip if already selected
       if (radioInputs.some(r => r.checked)) return;
 
       const headerEl = container.querySelector('legend, h1, h2, h3, h4, label, [class*="label"], span.t-14');
@@ -122,7 +122,6 @@
 
       let targetValue = null;
 
-      // Q&A Bank
       if (userProfile.screening && Array.isArray(userProfile.screening)) {
         for (const item of userProfile.screening) {
           if (!item.keywords) continue;
@@ -134,7 +133,6 @@
         }
       }
 
-      // Fallbacks for common screening questions
       if (!targetValue) {
         if (/authoriz|legally eligible|right to work|work permit/.test(questionText)) targetValue = 'yes';
         else if (/require.*sponsor|need.*visa|visa sponsor/.test(questionText))       targetValue = 'no';
@@ -167,7 +165,6 @@
     return filledCount;
   }
 
-  // ─── Auto-Select Resume ─────────────────────────────────────────────────────
   function handleResumeStep() {
     const resumeCards = Array.from(document.querySelectorAll(
       '.jobs-resume-picker input[type="radio"]:not(:checked), ' +
@@ -190,7 +187,6 @@
     return false;
   }
 
-  // ─── Auto-Check Agreement Checkboxes ────────────────────────────────────────
   function handleCheckboxes() {
     const checkboxes = document.querySelectorAll('input[type="checkbox"]:not(:checked)');
     checkboxes.forEach(cb => {
@@ -204,43 +200,127 @@
     });
   }
 
-  // ─── 🧠 LEARN ON THE GO ────────────────────────────────────────────────────
-  function learnFromUserAnswer(questionText, answerText) {
-    if (!userProfile || userProfile.settings?.learnOnTheGo === false) return;
-    if (!questionText || !answerText) return;
+  // ─── 💾 INJECT "SAVE TO SPEEDFILL" BUTTON BELOW UNMATCHED FIELDS ────────────
+  function injectSaveButton(container, inputEl = null) {
+    if (!container || container.dataset.speedfillSaveInjected === 'true') return;
+    container.dataset.speedfillSaveInjected = 'true';
 
-    const cleanedQ = questionText.toLowerCase().replace(/[*:]/g, '').replace(/\s+/g, ' ').trim();
-    const cleanedA = String(answerText).trim();
+    const targetInput = inputEl || container;
 
-    if (!cleanedQ || !cleanedA || cleanedA.toLowerCase() === 'select an option') return;
+    // Do not inject button if field is already recognized/matched
+    const match = window.SpeedFillMatcher?.matchField(targetInput, userProfile);
+    if (match !== null && match !== undefined && match.value) return;
 
-    const words = cleanedQ.split(/\s+/).filter(w =>
-      w.length > 2 && !['are', 'you', 'how', 'many', 'the', 'what', 'for', 'with', 'your', 'have', 'does', 'do', 'please'].includes(w)
-    );
-    const keywords = words.slice(0, 5).join(', ');
-    if (!keywords) return;
+    const btn = document.createElement('button');
+    btn.className = 'speedfill-save-btn';
+    btn.type = 'button';
+    btn.innerHTML = '💾 Save to SpeedFill';
 
-    if (!Array.isArray(userProfile.screening)) userProfile.screening = [];
+    function executeSave() {
+      let questionText = window.SpeedFillMatcher?.getElementLabelText(targetInput);
+      if (!questionText && container) {
+        const headerEl = container.querySelector('legend, h1, h2, h3, h4, label, .fb-form-element-label, [class*="label"]');
+        questionText = headerEl ? headerEl.textContent.trim() : '';
+      }
+      if (!questionText) questionText = 'Custom Question';
 
-    const existing = userProfile.screening.find(item => {
-      const kws = item.keywords.toLowerCase();
-      return words.some(w => kws.includes(w));
-    });
-
-    if (existing) {
-      if (existing.answer !== cleanedA) {
-        existing.answer = cleanedA;
-        LOG(`🧠 Learned update: "${existing.keywords}" → "${cleanedA}"`);
+      let answerText = '';
+      if (inputEl && inputEl.type === 'radio') {
+        const selected = container.querySelector('input[type="radio"]:checked');
+        answerText = selected ? (
+          Array.from(selected.labels || [])[0]?.textContent ||
+          selected.closest('label')?.textContent ||
+          selected.nextElementSibling?.textContent ||
+          selected.value || ''
+        ).trim() : '';
+      } else if (targetInput.tagName?.toLowerCase() === 'select') {
+        const selOpt = targetInput.options[targetInput.selectedIndex];
+        answerText = selOpt ? selOpt.text.trim() : targetInput.value.trim();
       } else {
+        answerText = (targetInput.value || '').trim();
+      }
+
+      if (!answerText || answerText.toLowerCase() === 'select an option') {
+        btn.innerHTML = '❌ Fill answer first';
+        setTimeout(() => { btn.innerHTML = '💾 Save to SpeedFill'; }, 1600);
         return;
       }
-    } else {
-      userProfile.screening.push({ keywords, answer: cleanedA });
-      LOG(`🧠 Learned new Q&A: "${keywords}" → "${cleanedA}"`);
+
+      if (userProfile) {
+        if (!Array.isArray(userProfile.screening)) userProfile.screening = [];
+
+        const words = questionText.toLowerCase().replace(/[*:]/g, '').split(/\s+/).filter(w =>
+          w.length > 2 && !['are', 'you', 'how', 'many', 'the', 'what', 'for', 'with', 'your', 'have', 'does', 'do', 'please'].includes(w)
+        );
+        const keywords = words.slice(0, 5).join(', ') || questionText.toLowerCase().substring(0, 30);
+
+        const existing = userProfile.screening.find(item => item.keywords.toLowerCase() === keywords.toLowerCase());
+        if (existing) {
+          existing.answer = answerText;
+        } else {
+          userProfile.screening.push({ keywords, answer: answerText });
+        }
+
+        chrome.storage.local.set({ userProfile }, () => {
+          btn.innerHTML = '✅ Saved!';
+          btn.classList.add('saved');
+          btn.disabled = true;
+          LOG(`Saved Q&A: "${keywords}" → "${answerText}"`);
+          showLearnToast(`🧠 Saved: "${keywords}" → "${answerText}"`);
+        });
+      }
     }
 
-    chrome.storage.local.set({ userProfile });
-    showLearnToast(`🧠 Learned: "${keywords}" → "${cleanedA}"`);
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      executeSave();
+    });
+
+    // Support Enter key press inside input box
+    if (targetInput && targetInput.tagName?.toLowerCase() !== 'select' && targetInput.type !== 'radio') {
+      targetInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          executeSave();
+        }
+      });
+    }
+
+    // Append button neatly below input wrapper or beside fieldset header
+    if (inputEl && inputEl.type === 'radio') {
+      const header = container.querySelector('legend, h1, h2, h3, h4, .fb-form-element-label');
+      if (header) {
+        header.appendChild(btn);
+      } else {
+        container.appendChild(btn);
+      }
+    } else {
+      const wrapper = container.closest('.jobs-easy-apply-form-element, .fb-dash-form-element, .artdeco-text-input--container') || container.parentElement || container;
+      if (wrapper.nextSibling) {
+        wrapper.parentNode.insertBefore(btn, wrapper.nextSibling);
+      } else {
+        wrapper.parentNode.appendChild(btn);
+      }
+    }
+  }
+
+  function attachSaveButtonsToUnmatchedFields() {
+    const inputs = document.querySelectorAll(
+      'input[type="text"], input[type="number"], input[type="email"], input[type="tel"], textarea, select'
+    );
+    inputs.forEach(input => {
+      if (input.offsetWidth === 0 && input.offsetHeight === 0 || input.disabled || input.readOnly) return;
+      injectSaveButton(input);
+    });
+
+    const radioContainers = document.querySelectorAll('fieldset, [role="radiogroup"], .fb-dash-form-element');
+    radioContainers.forEach(container => {
+      const firstRadio = container.querySelector('input[type="radio"]');
+      if (firstRadio) {
+        injectSaveButton(container, firstRadio);
+      }
+    });
   }
 
   function showLearnToast(msg) {
@@ -248,47 +328,11 @@
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'sf-learn-toast';
-      toast.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;
-        background: #0a66c2; color: #fff; padding: 10px 16px; border-radius: 20px;
-        font-family: system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.3); transition: all 0.3s ease; pointer-events: none;
-      `;
       document.body.appendChild(toast);
     }
     toast.textContent = msg;
     toast.style.opacity = '1';
     setTimeout(() => { if (toast) toast.style.opacity = '0'; }, 2600);
-  }
-
-  function attachLearnListeners() {
-    const modal = document.querySelector('.jobs-easy-apply-modal, div[role="dialog"], .artdeco-modal') || document.body;
-    if (modal.dataset.speedfillLearnAttached) return;
-    modal.dataset.speedfillLearnAttached = 'true';
-
-    modal.addEventListener('change', e => {
-      const target = e.target;
-      if (!target) return;
-
-      if (target.matches('input[type="text"], input[type="number"], textarea')) {
-        const qText = window.SpeedFillMatcher?.getElementLabelText(target);
-        if (qText && target.value.trim()) learnFromUserAnswer(qText, target.value.trim());
-      }
-      if (target.matches('select')) {
-        const qText = window.SpeedFillMatcher?.getElementLabelText(target);
-        const selOpt = target.options[target.selectedIndex];
-        if (qText && selOpt && selOpt.text.trim() && selOpt.value !== 'Select an option') {
-          learnFromUserAnswer(qText, selOpt.text.trim());
-        }
-      }
-      if (target.matches('input[type="radio"]')) {
-        const fieldset = target.closest('fieldset');
-        const legend   = fieldset?.querySelector('legend, .fb-form-element-label');
-        const qText    = legend?.textContent || fieldset?.textContent || '';
-        const radioLbl = Array.from(target.labels || [])[0]?.textContent || target.nextElementSibling?.textContent || target.value;
-        if (qText && radioLbl) learnFromUserAnswer(qText, radioLbl.trim());
-      }
-    }, true);
   }
 
   // ─── STEP NAVIGATOR: Click Next / Review / Submit ───────────────────────────
@@ -301,7 +345,6 @@
       const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase().trim();
       const text      = (b.textContent || '').toLowerCase().trim();
 
-      // Exclude Close/Dismiss buttons
       if (ariaLabel === 'dismiss' || ariaLabel.includes('close modal') || text === 'dismiss') return false;
 
       return (
@@ -378,8 +421,6 @@
       return 0;
     }
 
-    attachLearnListeners();
-
     let filledCount = 0;
 
     // 1. Handle Resume step
@@ -417,15 +458,18 @@
       LOG(`Auto-filled ${filledCount} field(s) on current step`);
     }
 
+    // 6. Inject "Save to SpeedFill" buttons for unmatched fields
+    attachSaveButtonsToUnmatchedFields();
+
     const stepDelay = userProfile?.settings?.stepDelayMs ?? 200;
 
-    // 6. Check for Submit button first
+    // 7. Check for Submit button first
     if (userProfile?.settings?.autoSubmitApplication !== false) {
       const submitted = clickSubmitButton();
       if (submitted) return filledCount;
     }
 
-    // 7. Auto-advance intermediate steps (Next / Continue / Review)
+    // 8. Auto-advance intermediate steps (Next / Continue / Review)
     if (userProfile?.settings?.autoAdvanceStep !== false) {
       setTimeout(clickContinueButton, stepDelay);
     }
@@ -443,7 +487,7 @@
         if (userProfile?.settings?.autoFillOnLoad !== false) {
           fillCurrentForm();
         }
-      }, 50); // Ultra-fast 50ms debounce matching Indeed engine
+      }, 50);
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
@@ -466,7 +510,6 @@
       });
     }
 
-    // When user clicks radio / select inside modal, trigger auto-advance check
     if (target.matches('input[type="radio"], input[type="checkbox"], option')) {
       setTimeout(fillCurrentForm, 150);
     }
@@ -499,7 +542,7 @@
 
   // ─── BOOT ──────────────────────────────────────────────────────────────────
   function init() {
-    LOG('SpeedFill Auto-Apply Engine v2.1.0 (Indeed Architecture) initialized');
+    LOG('SpeedFill Engine v2.2.0 (Manual Save Button Mode) initialized');
     loadProfile(() => {
       setupDOMObserver();
       fillCurrentForm();
