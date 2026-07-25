@@ -1,11 +1,11 @@
 /**
- * LinkedIn SpeedFill – Auto-Fill & Manual "Save to SpeedFill" Engine v2.3.0
+ * LinkedIn SpeedFill – Auto-Fill & Step Navigator Engine v2.4.0
  *
- * Safe Filter Guarding:
- *  - STRICTLY SCOPED to Easy Apply modals (.jobs-easy-apply-modal)
- *  - COMPLETELY INACTIVE when user opens LinkedIn Search Filters ("Date Posted",
- *    "Experience Level", "All Filters", "Company", etc.)
- *  - NEVER clicks "Show results" or alters filter checkboxes/radios
+ * Guaranteed Speed & Human Delay Control:
+ *  - STRICTLY ENFORCES user-configured stepDelayMs (e.g. 500ms, 1000ms, 5000ms, 10000ms)
+ *  - Clears previous step timers so DOM mutations do NOT trigger early/duplicate clicks
+ *  - Step fingerprinting ensures timer runs once per step for the exact requested delay
+ *  - Submit button ALSO respects the exact stepDelayMs setting
  */
 
 (function () {
@@ -13,8 +13,10 @@
 
   const LOG = (...args) => console.log('[SpeedFill]', ...args);
 
-  let userProfile      = null;
-  let isObserverActive = false;
+  let userProfile          = null;
+  let isObserverActive     = false;
+  let currentStepHash      = '';
+  let advanceTimerScheduled = false;
 
   // ─── Profile Loading & Storage Watcher ──────────────────────────────────────
   function loadProfile(callback) {
@@ -40,15 +42,12 @@
     chrome.storage.onChanged.addListener((changes, namespace) => {
       if (namespace === 'local' && changes.userProfile) {
         userProfile = changes.userProfile.newValue;
-        LOG('Profile updated in real-time');
+        LOG('Profile updated in real-time. New delay:', userProfile.settings?.stepDelayMs, 'ms');
       }
     });
   }
 
   // ─── Filter Modal Guard ─────────────────────────────────────────────────────
-  /**
-   * Returns true if an element belongs to LinkedIn's search filter widgets
-   */
   function isFilterElement(el) {
     if (!el) return false;
     if (el.closest('.search-reusables__all-filters-modal, .search-reusables__filter-binary-toggle, [class*="filter-panel"], [class*="filter-modal"], [data-test-search-filter]')) {
@@ -59,15 +58,10 @@
     return cls.includes('search-reusable') || aria.includes('filter');
   }
 
-  /**
-   * Strictly find the Easy Apply modal dialog. Returns null if user is on filter screens.
-   */
   function findEasyApplyModal() {
-    // Strategy 1: Specific Easy Apply modal container
     const modal = document.querySelector('.jobs-easy-apply-modal, .jobs-easy-apply-content');
     if (modal && !isFilterElement(modal)) return modal;
 
-    // Strategy 2: Check all dialogs, strictly excluding Filter modals
     const dialogs = document.querySelectorAll('div[role="dialog"], .artdeco-modal');
     for (const dialog of dialogs) {
       if (isFilterElement(dialog)) continue;
@@ -378,7 +372,7 @@
     setTimeout(() => { if (toast) toast.style.opacity = '0'; }, 2600);
   }
 
-  // ─── STEP NAVIGATOR: Click Next / Review / Submit (Modal-Scoped Only) ────────
+  // ─── STEP NAVIGATOR & ACTION BUTTON CLICKERS ───────────────────────────────
   function clickContinueButton(modal) {
     if (!modal) return false;
 
@@ -390,7 +384,6 @@
       const ariaLabel = (b.getAttribute('aria-label') || '').toLowerCase().trim();
       const text      = (b.textContent || '').toLowerCase().trim();
 
-      // STRICTLY EXCLUDE: Close/Dismiss buttons AND Filter "Show results" / "Apply" buttons
       if (ariaLabel === 'dismiss' || ariaLabel.includes('close modal') || text === 'dismiss' || text.includes('show') || text.includes('results')) return false;
 
       return (
@@ -410,8 +403,10 @@
     if (continueBtn) {
       LOG('Auto-advancing step via button:', continueBtn.getAttribute('aria-label') || continueBtn.textContent.trim());
       continueBtn.click();
+      advanceTimerScheduled = false; // Reset for next step
       return true;
     }
+    advanceTimerScheduled = false;
     return false;
   }
 
@@ -441,6 +436,7 @@
       LOG('Auto-submitting application via button:', submitBtn.getAttribute('aria-label') || submitBtn.textContent.trim());
       logApplicationSubmit();
       submitBtn.click();
+      advanceTimerScheduled = false;
 
       setTimeout(() => {
         const dismiss = document.querySelector('button[aria-label="Dismiss"], .artdeco-modal__dismiss, button[data-test-modal-close-btn]');
@@ -448,6 +444,7 @@
       }, 1200);
       return true;
     }
+    advanceTimerScheduled = false;
     return false;
   }
 
@@ -462,13 +459,21 @@
     });
   }
 
-  // ─── CORE FORM FILLING LOOP (Guarded & Modal Scoped) ───────────────────────
-  function fillCurrentForm() {
-    // 🛡️ STRICT GUARD: Is an Easy Apply modal open right now?
-    const modal = findEasyApplyModal();
-    if (!modal) {
-      return 0; // COMPLETELY INACTIVE on LinkedIn filters & normal browsing
+  // ─── STEP FINGERPRINT & STRICT DELAY SCHEDULER ──────────────────────────────
+  function getStepFingerprint(modal) {
+    try {
+      const formHeading = modal.querySelector('h3, h2')?.textContent || '';
+      const fields = Array.from(modal.querySelectorAll('input, select, textarea')).map(el => el.id || el.name || el.type).join(',');
+      return formHeading + '|' + fields;
+    } catch(e) {
+      return Date.now().toString();
     }
+  }
+
+  // ─── CORE FORM FILLING LOOP (Strict Delay Control) ─────────────────────────
+  function fillCurrentForm() {
+    const modal = findEasyApplyModal();
+    if (!modal) return 0;
 
     if (!userProfile) {
       loadProfile(() => fillCurrentForm());
@@ -477,16 +482,10 @@
 
     let filledCount = 0;
 
-    // 1. Handle Resume step inside modal
-    const handledResume = handleResumeStep(modal);
-
-    // 2. Handle Checkboxes inside modal
+    handleResumeStep(modal);
     handleCheckboxes(modal);
-
-    // 3. Handle Radio groups inside modal
     filledCount += handleRadioGroups(modal);
 
-    // 4. Handle Text inputs, textarea, numbers inside modal
     const inputs = modal.querySelectorAll(
       'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input:not([type]), textarea'
     );
@@ -498,7 +497,6 @@
       }
     });
 
-    // 5. Handle Select dropdowns inside modal
     const selects = modal.querySelectorAll('select');
     selects.forEach(select => {
       if (select.offsetWidth === 0 && select.offsetHeight === 0) return;
@@ -508,24 +506,33 @@
       }
     });
 
-    if (filledCount > 0) {
-      LOG(`Auto-filled ${filledCount} field(s) on current step`);
-    }
-
-    // 6. Inject "Save to SpeedFill" buttons for unmatched fields inside modal
     attachSaveButtonsToUnmatchedFields(modal);
 
-    const stepDelay = userProfile?.settings?.stepDelayMs ?? 200;
-
-    // 7. Check for Submit button inside modal first
-    if (userProfile?.settings?.autoSubmitApplication !== false) {
-      const submitted = clickSubmitButton(modal);
-      if (submitted) return filledCount;
+    // Compute step fingerprint to avoid re-scheduling timer on same step
+    const stepHash = getStepFingerprint(modal);
+    if (stepHash !== currentStepHash) {
+      currentStepHash = stepHash;
+      advanceTimerScheduled = false;
+      clearTimeout(window._sfAdvanceTimer);
     }
 
-    // 8. Auto-advance intermediate steps inside modal (Next / Continue / Review)
-    if (userProfile?.settings?.autoAdvanceStep !== false) {
-      setTimeout(() => clickContinueButton(modal), stepDelay);
+    // Schedule auto-advance / submit with strict stepDelayMs ONLY ONCE per step
+    if (!advanceTimerScheduled) {
+      advanceTimerScheduled = true;
+      const stepDelay = Math.max(100, parseInt(userProfile?.settings?.stepDelayMs, 10) || 500);
+
+      LOG(`Scheduling step advancement in exactly ${stepDelay} ms`);
+
+      clearTimeout(window._sfAdvanceTimer);
+      window._sfAdvanceTimer = setTimeout(() => {
+        if (userProfile?.settings?.autoSubmitApplication !== false) {
+          const submitted = clickSubmitButton(modal);
+          if (submitted) return;
+        }
+        if (userProfile?.settings?.autoAdvanceStep !== false) {
+          clickContinueButton(modal);
+        }
+      }, stepDelay);
     }
 
     return filledCount;
@@ -538,24 +545,20 @@
     const observer = new MutationObserver(() => {
       clearTimeout(window._speedfillTimer);
       window._speedfillTimer = setTimeout(() => {
-        // Guard check: only run if an Easy Apply modal is actually present
         const modal = findEasyApplyModal();
         if (modal && userProfile?.settings?.autoFillOnLoad !== false) {
           fillCurrentForm();
         }
-      }, 50);
+      }, 60);
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
     isObserverActive = true;
   }
 
-  // Click listener for Easy Apply button triggers
   document.addEventListener('click', e => {
     const target = e.target;
     if (!target) return;
-
-    // Do NOT trigger if user clicked inside a LinkedIn Filter panel
     if (isFilterElement(target)) return;
 
     const isApplyBtn = target.textContent?.includes('Easy Apply') ||
@@ -563,19 +566,14 @@
                        target.closest('.jobs-apply-button');
 
     if (isApplyBtn) {
-      LOG('User clicked Easy Apply button — initiating fast fill loop');
-      [100, 300, 600, 1000, 1500].forEach(delay => {
-        setTimeout(fillCurrentForm, delay);
-      });
-    }
-
-    const modal = findEasyApplyModal();
-    if (modal && target.matches('input[type="radio"], input[type="checkbox"], option')) {
-      setTimeout(fillCurrentForm, 150);
+      LOG('User clicked Easy Apply button — initiating fill');
+      currentStepHash = '';
+      advanceTimerScheduled = false;
+      clearTimeout(window._sfAdvanceTimer);
+      setTimeout(fillCurrentForm, 200);
     }
   }, true);
 
-  // User manual input listener to clear userEdited lock if cleared
   document.addEventListener('input', e => {
     if (e.target?.matches?.('input, textarea')) {
       if (e.target.value.trim()) {
@@ -584,18 +582,16 @@
     }
   }, true);
 
-  // Alt+F Hotkey trigger
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'TRIGGER_AUTOFILL') {
         LOG('Alt+F hotkey triggered');
         const modal = findEasyApplyModal();
         if (modal) {
-          if (userProfile) {
-            fillCurrentForm();
-          } else {
-            loadProfile(() => fillCurrentForm());
-          }
+          currentStepHash = '';
+          advanceTimerScheduled = false;
+          clearTimeout(window._sfAdvanceTimer);
+          fillCurrentForm();
         }
         sendResponse({ status: 'OK' });
         return true;
@@ -605,10 +601,9 @@
 
   // ─── BOOT ──────────────────────────────────────────────────────────────────
   function init() {
-    LOG('SpeedFill Engine v2.3.0 (Filter-Guarded Easy Apply Mode) initialized');
+    LOG('SpeedFill Engine v2.4.0 (Strict Delay Control) initialized');
     loadProfile(() => {
       setupDOMObserver();
-      // Only fill if an Easy Apply modal is already active
       const modal = findEasyApplyModal();
       if (modal) fillCurrentForm();
     });
