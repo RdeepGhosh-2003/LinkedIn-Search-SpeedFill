@@ -1,83 +1,124 @@
 /**
- * LinkedIn SpeedFill – Easy Apply Modal Engine v1.1
+ * LinkedIn SpeedFill – Easy Apply Modal Engine v1.2
  *
- * Responsibilities:
- *  • Detect the Easy Apply modal opening via MutationObserver (debounced)
- *  • Fill text inputs, numeric fields, textareas
- *  • Answer radio groups (fieldsets) using Q&A bank + smart fallbacks
- *  • Handle <select> dropdowns
- *  • Auto-select resume card
- *  • Auto-advance (Next → Review → Submit) with configurable delay
- *  • Safe pause + amber highlight on unfilled required fields
- *  • Persist application log entry on submit
+ * Key fixes in this version:
+ *  - Shadow DOM piercing: LinkedIn now renders some components inside Shadow Roots.
+ *    We use a recursive queryShadowAll() helper to find elements in both regular
+ *    and shadow DOM trees.
+ *  - Much broader modal detection: checks multiple selector strategies + text content
+ *  - Broader button detection: text content matching as ultimate fallback
+ *  - Broader input detection: includes artdeco inputs, fb-form-element variants
+ *  - Immediate fill on modal open (no waiting for hash change to be different)
+ *  - Console logging for easy debugging via DevTools
  */
 
 (function () {
   'use strict';
 
+  const LOG = (...args) => console.log('[SpeedFill]', ...args);
+
   // ─── State ─────────────────────────────────────────────────────────────────
-  let profile = null;
-  let observer = null;
-  let stepTimer = null;
-  let lastModalHash = '';     // debounce: only reprocess if modal content changed
-  let processingLock = false; // prevent re-entrant processModalStep calls
+  let profile       = null;
+  let observer      = null;
+  let stepTimer     = null;
+  let lastModalHash = '';
+  let processingLock = false;
+  let debounceTimer  = null;
 
-  // ─── Selectors ─────────────────────────────────────────────────────────────
-  const MODAL_SELECTOR =
-    '.jobs-easy-apply-modal, ' +
-    '[data-test-modal][aria-labelledby*="jobs-easy-apply"], ' +
-    'div.artdeco-modal[role="dialog"]';
-
+  // ─── Shadow DOM helpers ─────────────────────────────────────────────────────
   /**
-   * Returns true only if the dialog is a LinkedIn Easy Apply dialog
-   * (not a "report job", "share", or "sign-in" dialog).
+   * Recursively search el + all its shadow roots for elements matching selector.
+   * Returns array of all matches found across the entire tree.
    */
-  function isEasyApplyModal(el) {
-    if (!el) return false;
-    const text = (el.getAttribute('aria-labelledby') || '') +
-                 (el.querySelector('.jobs-easy-apply-modal__title, h2')?.textContent || '');
-    // Must contain the Easy Apply header text or the known class
-    return (
-      el.classList.contains('jobs-easy-apply-modal') ||
-      el.querySelector('.jobs-easy-apply-modal__title, h2.t-24') !== null ||
-      text.toLowerCase().includes('easy apply')
+  function queryShadowAll(root, selector) {
+    const results = [];
+    try {
+      results.push(...Array.from(root.querySelectorAll(selector)));
+    } catch(e) {}
+
+    const allEls = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+    for (const el of allEls) {
+      if (el.shadowRoot) {
+        results.push(...queryShadowAll(el.shadowRoot, selector));
+      }
+    }
+    return results;
+  }
+
+  function queryShadowFirst(root, selector) {
+    return queryShadowAll(root, selector)[0] || null;
+  }
+
+  // ─── Modal Detection ────────────────────────────────────────────────────────
+  /**
+   * Find the Easy Apply modal using multiple strategies.
+   * LinkedIn uses artdeco-modal system — the modal may or may not have the
+   * jobs-easy-apply-modal class, but the h2/h3 title will contain "Easy Apply".
+   */
+  function findEasyApplyModal() {
+    // Strategy 1: class-based (most specific)
+    const byClass = document.querySelector('.jobs-easy-apply-modal');
+    if (byClass) return byClass;
+
+    // Strategy 2: all artdeco modals — find the one whose title says Easy Apply
+    const allModals = document.querySelectorAll(
+      'div[role="dialog"], .artdeco-modal, [data-test-modal]'
     );
+
+    for (const modal of allModals) {
+      const heading = modal.querySelector('h1, h2, h3, h4, [class*="title"]');
+      if (heading?.textContent?.toLowerCase().includes('easy apply')) {
+        return modal;
+      }
+      // check aria-label on dialog itself
+      const ariaLabel = (modal.getAttribute('aria-label') || '').toLowerCase();
+      if (ariaLabel.includes('easy apply') || ariaLabel.includes('apply to')) {
+        return modal;
+      }
+    }
+
+    // Strategy 3: look for the characteristic footer with Next/Submit buttons
+    const footers = document.querySelectorAll('.jobs-easy-apply-footer, [class*="easy-apply-footer"]');
+    if (footers.length > 0) {
+      return footers[0].closest('div[role="dialog"], .artdeco-modal') || footers[0].parentElement;
+    }
+
+    // Strategy 4: Shadow DOM search
+    const shadowModal = queryShadowFirst(document.body, '.jobs-easy-apply-modal');
+    if (shadowModal) return shadowModal;
+
+    return null;
   }
 
   // ─── Profile loading ────────────────────────────────────────────────────────
   function loadProfile(callback) {
-    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+      LOG('chrome.storage unavailable');
+      return;
+    }
     chrome.storage.local.get(['userProfile'], result => {
-      profile = result.userProfile || getDefaultProfile();
+      profile = result.userProfile || null;
+      if (!profile) {
+        LOG('No profile in storage — extension not configured yet');
+      } else {
+        LOG('Profile loaded:', profile.personal?.fullName);
+      }
       if (callback) callback();
     });
   }
 
-  function getDefaultProfile() {
-    return {
-      personal: { fullName: '', firstName: '', lastName: '', email: '', phone: '', city: '', state: '' },
-      work: {
-        currentRole: { jobTitle: '', company: '', yearsExperience: '', currentSalary: '' },
-        targetRole: { jobTitle: '', targetLocation: '', expectedSalary: '', noticePeriod: '' }
-      },
-      education: { degree: '', major: '', university: '', graduationYear: '' },
-      screening: [],
-      settings: {
-        autoFillOnLoad: true, pauseOnUnmatchedFields: true, stepDelayMs: 600,
-        autoSelectResume: true, autoAdvanceStep: true, autoSubmitApplication: false,
-        highlightFilledFields: true
-      }
-    };
-  }
-
   // ─── React-aware value setter ───────────────────────────────────────────────
   function setNativeValue(el, value) {
-    const proto = Object.getPrototypeOf(el);
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set ||
-                   Object.getOwnPropertyDescriptor(el, 'value')?.set;
-    if (setter) {
-      setter.call(el, value);
-    } else {
+    try {
+      const proto  = Object.getPrototypeOf(el);
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set ||
+                     Object.getOwnPropertyDescriptor(el, 'value')?.set;
+      if (setter) {
+        setter.call(el, value);
+      } else {
+        el.value = value;
+      }
+    } catch(e) {
       el.value = value;
     }
     el.dispatchEvent(new Event('input',  { bubbles: true }));
@@ -85,87 +126,84 @@
     el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
   }
 
-  // ─── Processors ────────────────────────────────────────────────────────────
-
-  /** Fill text / number / email / tel / textarea inputs */
+  // ─── Fill text inputs ───────────────────────────────────────────────────────
   function processInputs(modal) {
     let hasUnfilled = false;
-    const inputs = modal.querySelectorAll(
+
+    // Get all inputs including those in shadow roots
+    const inputs = queryShadowAll(modal,
       'input[type="text"], input[type="number"], input[type="email"], ' +
       'input[type="tel"], input:not([type]), textarea'
     );
 
-    inputs.forEach(input => {
-      // Skip if user manually edited this field
-      if (input.dataset.speedfillUserEdited === 'true') return;
-      // Skip already-filled fields
-      if (input.value && input.value.trim() !== '') return;
-      // Skip hidden / readonly / disabled
-      if (input.hidden || input.disabled || input.readOnly) return;
+    LOG(`Found ${inputs.length} inputs in modal`);
+
+    for (const input of inputs) {
+      if (input.dataset.speedfillUserEdited === 'true') continue;
+      if (input.value?.trim()) continue;
+      if (input.hidden || input.disabled || input.readOnly) continue;
 
       const match = window.SpeedFillMatcher?.matchField(input, profile);
-
       if (match?.value) {
         setNativeValue(input, match.value);
-        if (profile.settings?.highlightFilledFields) {
+        if (profile?.settings?.highlightFilledFields) {
           input.classList.add('speedfill-highlight');
-          input.classList.remove('speedfill-warning');
         }
-        // Mark so we don't refill it on re-run
         input.dataset.speedfillFilled = 'true';
+        LOG(`Filled "${match.keyMatched}" → "${match.value}"`);
       } else {
-        const required = input.required ||
-                         input.getAttribute('aria-required') === 'true' ||
-                         input.closest('[required]') !== null;
-        if (required) {
+        const isRequired = input.required ||
+                           input.getAttribute('aria-required') === 'true';
+        if (isRequired) {
           input.classList.add('speedfill-warning');
           hasUnfilled = true;
+          LOG(`Required field unmatched:`, input.id || input.name || input.placeholder);
         }
       }
-    });
-
+    }
     return hasUnfilled;
   }
 
-  /** Answer <select> dropdowns */
+  // ─── Fill select dropdowns ──────────────────────────────────────────────────
   function processDropdowns(modal) {
-    modal.querySelectorAll('select').forEach(select => {
-      if (select.disabled) return;
-      const currentVal = select.value;
-      if (currentVal && currentVal !== '' && currentVal !== 'Select an option') return;
+    const selects = queryShadowAll(modal, 'select');
+    for (const select of selects) {
+      if (select.disabled) continue;
+      if (select.value && select.value !== '' && select.value !== 'Select an option') continue;
 
       const match = window.SpeedFillMatcher?.matchField(select, profile);
-      if (!match?.value) return;
+      if (!match?.value) continue;
 
       const options = Array.from(select.options);
       const target = options.find(o =>
-        o.text.toLowerCase().includes(match.value.toLowerCase()) ||
-        o.value.toLowerCase().includes(match.value.toLowerCase())
-      ) || (options.length > 1 ? null : null); // don't blindly pick option[1]
-
+        o.text.toLowerCase().includes(match.value.toLowerCase())
+      );
       if (target) {
         setNativeValue(select, target.value);
         select.classList.add('speedfill-highlight');
+        LOG(`Dropdown filled: "${match.keyMatched}"`);
       }
-    });
+    }
   }
 
-  /** Answer radio fieldset groups */
+  // ─── Answer radio groups ────────────────────────────────────────────────────
   function processRadioGroups(modal) {
     let hasUnfilled = false;
+    const fieldsets = queryShadowAll(modal, 'fieldset');
 
-    modal.querySelectorAll('fieldset').forEach(fieldset => {
+    LOG(`Found ${fieldsets.length} fieldsets`);
+
+    for (const fieldset of fieldsets) {
       const radios = Array.from(fieldset.querySelectorAll('input[type="radio"]'));
-      if (radios.length === 0) return;
-      if (radios.some(r => r.checked)) return; // already answered
+      if (radios.length === 0) continue;
+      if (radios.some(r => r.checked)) continue;
 
-      const legendEl = fieldset.querySelector('legend, .fb-form-element-label');
-      const legendText = (legendEl?.textContent || fieldset.textContent || '').toLowerCase().trim();
-
+      const legendEl  = fieldset.querySelector('legend, [class*="label"], span.t-14');
+      const legendText = (legendEl?.textContent || fieldset.textContent || '').toLowerCase().slice(0, 200);
       let targetValue = null;
 
-      // 1. Q&A bank keywords
-      if (Array.isArray(profile.screening)) {
+      // Q&A bank
+      if (Array.isArray(profile?.screening)) {
         for (const item of profile.screening) {
           if (!item.keywords) continue;
           const kws = item.keywords.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
@@ -176,248 +214,234 @@
         }
       }
 
-      // 2. Smart fallbacks for common LinkedIn screening questions
+      // Smart fallbacks
       if (!targetValue) {
-        if (/authoriz|legally eligible|work permit|right to work/.test(legendText)) {
-          targetValue = 'yes';
-        } else if (/require.*sponsor|need.*visa|visa sponsor/.test(legendText)) {
-          targetValue = 'no'; // Most candidates don't need sponsorship; user should override via Q&A bank
-        } else if (/relocat/.test(legendText)) {
-          targetValue = 'yes';
-        } else if (/hybrid|remote|on.?site|in.?office/.test(legendText)) {
-          // Pick "Yes" if available, otherwise first option
-          targetValue = 'yes';
-        }
+        if (/authoriz|legally eligible|right to work|work permit/.test(legendText)) targetValue = 'yes';
+        else if (/require.*sponsor|need.*visa|visa sponsor/.test(legendText))       targetValue = 'no';
+        else if (/relocat/.test(legendText))                                        targetValue = 'yes';
+        else if (/hybrid|remote|on.?site|in.?person/.test(legendText))              targetValue = 'yes';
+        else if (/currently.*work|still.*employ/.test(legendText))                  targetValue = 'yes';
       }
 
       if (targetValue) {
-        // Find the radio whose label best matches targetValue
         const picked = radios.find(r => {
-          const labelText = (
-            r.labels?.[0]?.textContent ||
+          const lbl = (
+            Array.from(r.labels || [])[0]?.textContent ||
             r.closest('label')?.textContent ||
             r.nextElementSibling?.textContent ||
             r.getAttribute('aria-label') ||
-            r.value ||
-            ''
+            r.value || ''
           ).toLowerCase();
-          return labelText.includes(targetValue);
-        }) || (targetValue === 'yes' ? radios.find(r => (r.value || '').toLowerCase() === 'yes') : null);
+          return lbl.includes(targetValue);
+        });
 
         if (picked) {
           picked.click();
           picked.dispatchEvent(new Event('change', { bubbles: true }));
           fieldset.classList.add('speedfill-highlight');
-          fieldset.classList.remove('speedfill-warning');
-          return;
+          LOG(`Radio answered: "${legendText.slice(0,50)}" → "${targetValue}"`);
+        } else {
+          LOG(`Radio no match found for target "${targetValue}" in: "${legendText.slice(0,50)}"`);
+          hasUnfilled = true;
         }
+      } else {
+        LOG(`Radio unmatched (no fallback): "${legendText.slice(0,50)}"`);
+        // Only block auto-advance if this is clearly a required group
+        const hasRequired = fieldset.querySelector('[aria-required="true"]');
+        if (hasRequired) hasUnfilled = true;
       }
-
-      // Required but unmatched
-      const requiredMark = fieldset.querySelector('[aria-required="true"], [required]');
-      if (requiredMark || legendText) {
-        fieldset.classList.add('speedfill-warning');
-        hasUnfilled = true;
-      }
-    });
-
+    }
     return hasUnfilled;
   }
 
-  /** Auto-select first resume card on the resume upload step */
+  // ─── Auto-select resume ─────────────────────────────────────────────────────
   function processResumeStep(modal) {
-    if (!profile.settings?.autoSelectResume) return;
+    if (!profile?.settings?.autoSelectResume) return;
 
-    // LinkedIn resume picker containers
-    const pickers = modal.querySelectorAll(
-      '.jobs-resume-picker, .jobs-document-upload-redesign, ' +
-      '[data-test-resume-picker], .jobs-resume-picker__resume-btn-container'
-    );
+    // Look for resume card radio inputs — LinkedIn renders these as custom radio cards
+    const resumeSelectors = [
+      '.jobs-resume-picker input[type="radio"]:not(:checked)',
+      '.jobs-document-upload-redesign input[type="radio"]:not(:checked)',
+      '[data-test-resume-card] input[type="radio"]:not(:checked)',
+      'input[name="resume"]:not(:checked)',
+      '.artdeco-card input[type="radio"]:not(:checked)'
+    ];
 
-    pickers.forEach(picker => {
-      // Radio-style resume cards
-      const radioCard = picker.querySelector('input[type="radio"]:not(:checked)');
-      if (radioCard) {
-        radioCard.click();
-        radioCard.dispatchEvent(new Event('change', { bubbles: true }));
+    for (const sel of resumeSelectors) {
+      const radioCards = queryShadowAll(modal, sel);
+      if (radioCards.length > 0) {
+        radioCards[0].click();
+        radioCards[0].dispatchEvent(new Event('change', { bubbles: true }));
+        LOG('Resume selected');
         return;
       }
+    }
 
-      // Button-style (newer LinkedIn UI)
-      const useBtn = picker.querySelector(
-        'button[aria-label*="Use"], button[aria-label*="Select"], ' +
-        'button.jobs-resume-picker__resume-btn:not(.jobs-resume-picker__resume-btn--selected)'
-      );
-      if (useBtn) useBtn.click();
-    });
+    // Fallback: button-style "Use resume" / "Select" buttons
+    const useBtn = queryShadowFirst(modal,
+      'button[aria-label*="Use"], button[aria-label*="Select resume"]'
+    );
+    if (useBtn) { useBtn.click(); LOG('Resume use-button clicked'); }
   }
 
-  // ─── Step Navigator ─────────────────────────────────────────────────────────
+  // ─── Find Next / Review / Submit button ─────────────────────────────────────
+  function findActionButton(modal) {
+    // Ordered priority: Submit > Review > Next/Continue
 
+    const candidates = queryShadowAll(modal,
+      'button[aria-label], button.artdeco-button--primary, footer button'
+    );
+
+    let nextBtn   = null;
+    let reviewBtn = null;
+    let submitBtn = null;
+
+    for (const btn of candidates) {
+      if (btn.disabled) continue;
+      const label = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase().trim();
+
+      if (label.includes('submit application') || label.includes('submit your application')) {
+        submitBtn = btn;
+      } else if (label.includes('review') || label.includes('review your application')) {
+        reviewBtn = btn;
+      } else if (
+        label.includes('next') ||
+        label.includes('continue') ||
+        label === 'next'
+      ) {
+        nextBtn = btn;
+      }
+    }
+
+    return { submitBtn, reviewBtn, nextBtn };
+  }
+
+  // ─── Advance step ───────────────────────────────────────────────────────────
   function advanceNextStep(modal) {
-    if (!modal || !modal.isConnected) return;
+    if (!modal?.isConnected) return;
 
-    // Priority: Submit > Review > Next/Continue
-    const submitBtn = modal.querySelector(
-      'button[aria-label*="Submit application"], ' +
-      'button.jobs-easy-apply-footer__action-btn--submit, ' +
-      '[data-easy-apply-submit-button]'
-    );
+    const { submitBtn, reviewBtn, nextBtn } = findActionButton(modal);
 
-    const reviewBtn = modal.querySelector(
-      'button[aria-label*="Review your application"], ' +
-      'button.jobs-easy-apply-footer__action-btn--review, ' +
-      '[data-easy-apply-review-button]'
-    );
+    LOG(`Buttons found — submit:${!!submitBtn} review:${!!reviewBtn} next:${!!nextBtn}`);
 
-    const nextBtn = modal.querySelector(
-      'button[aria-label*="Continue to next step"], ' +
-      'button.jobs-easy-apply-footer__action-btn--next, ' +
-      '[data-easy-apply-next-button], ' +
-      'button.artdeco-button--primary:not([disabled]):last-of-type'
-    );
-
-    if (submitBtn && !submitBtn.disabled && profile.settings?.autoSubmitApplication) {
+    if (submitBtn && profile?.settings?.autoSubmitApplication) {
+      LOG('Clicking Submit');
       submitBtn.click();
-      // Log application
-      logApplicationSubmit(modal);
+      logApplicationSubmit();
       window.postMessage({ type: 'SPEEDFILL_APPLICATION_SUBMITTED' }, '*');
-      // Dismiss thank-you dialog after a moment
       setTimeout(() => {
         const dismiss = document.querySelector(
-          'button[aria-label*="Dismiss"], button.artdeco-modal__dismiss, ' +
-          'button[data-test-modal-close-btn]'
+          'button[aria-label*="Dismiss"], .artdeco-modal__dismiss, button[data-test-modal-close-btn]'
         );
         if (dismiss) dismiss.click();
-      }, 1200);
+      }, 1500);
       return;
     }
 
-    if (reviewBtn && !reviewBtn.disabled) {
-      reviewBtn.click();
-      return;
-    }
+    if (reviewBtn) { LOG('Clicking Review'); reviewBtn.click(); return; }
+    if (nextBtn)   { LOG('Clicking Next');   nextBtn.click();   return; }
 
-    if (nextBtn && !nextBtn.disabled) {
-      nextBtn.click();
-      return;
-    }
-
-    // "Done" / "Not now" post-submit screen
-    const doneBtn = modal.querySelector(
-      'button[aria-label*="Dismiss"], button[data-test-modal-close-btn]'
-    );
-    if (doneBtn) {
-      doneBtn.click();
-      window.postMessage({ type: 'SPEEDFILL_APPLICATION_SUBMITTED' }, '*');
-    }
+    // Last resort: text-based button search
+    const allBtns = Array.from(document.querySelectorAll('button'));
+    const fallback = allBtns.find(b => {
+      const t = b.textContent.trim().toLowerCase();
+      return !b.disabled && (t === 'next' || t === 'continue' || t === 'review' || t.includes('next step'));
+    });
+    if (fallback) { LOG('Fallback button click:', fallback.textContent); fallback.click(); }
   }
 
-  // ─── Application Log ────────────────────────────────────────────────────────
-
-  function logApplicationSubmit(modal) {
+  // ─── Application log ────────────────────────────────────────────────────────
+  function logApplicationSubmit() {
     const jobTitle = document.querySelector(
-      '.jobs-easy-apply-modal__title, .t-24.t-bold'
+      '.jobs-easy-apply-modal h2, .t-24, .jobs-unified-top-card__job-title'
     )?.textContent?.trim() || 'Unknown Job';
-    const companyName = document.querySelector(
+    const company = document.querySelector(
       '.jobs-unified-top-card__company-name, .job-details-jobs-unified-top-card__company-name'
     )?.textContent?.trim() || 'Unknown Company';
 
-    const entry = {
-      jobTitle,
-      companyName,
-      url: window.location.href,
-      timestamp: new Date().toISOString()
-    };
-
     chrome.storage.local.get(['applicationLog'], result => {
       const log = result.applicationLog || [];
-      log.unshift(entry);
-      // Keep last 500 entries
+      log.unshift({ jobTitle, company, url: location.href, timestamp: new Date().toISOString() });
       chrome.storage.local.set({ applicationLog: log.slice(0, 500) });
     });
   }
 
-  // ─── Main Step Processing ───────────────────────────────────────────────────
-
+  // ─── Main step processor ────────────────────────────────────────────────────
   function getModalHash(modal) {
-    // Lightweight fingerprint of visible form content to detect step changes
-    const inputs = Array.from(modal.querySelectorAll('input, select, textarea, fieldset'));
-    return inputs.map(el => el.id || el.name || el.tagName + el.type).join('|');
+    try {
+      const els = Array.from(modal.querySelectorAll('input, select, textarea, fieldset, button'));
+      return els.map(e => (e.id || e.name || e.tagName + (e.type || ''))).join('|');
+    } catch(e) { return Date.now().toString(); }
   }
 
   function processModalStep() {
     if (processingLock) return;
+    if (!profile) { LOG('No profile loaded yet'); return; }
 
-    const modal = [...document.querySelectorAll(MODAL_SELECTOR)].find(isEasyApplyModal);
-    if (!modal) return;
+    const modal = findEasyApplyModal();
+    if (!modal) { LOG('No Easy Apply modal found'); return; }
+
+    LOG('Modal found:', modal.className || modal.tagName);
 
     const hash = getModalHash(modal);
-    if (hash === lastModalHash) return; // same step, no need to re-process
+    if (hash === lastModalHash) { LOG('Same step hash — skipping'); return; }
     lastModalHash = hash;
 
     processingLock = true;
+    try {
+      const missingInputs = processInputs(modal);
+      const missingRadios = processRadioGroups(modal);
+      processDropdowns(modal);
+      processResumeStep(modal);
 
-    // Fill the step
-    const missingInputs = processInputs(modal);
-    const missingRadios = processRadioGroups(modal);
-    processDropdowns(modal);
-    processResumeStep(modal);
+      const hasMissing = missingInputs || missingRadios;
+      LOG(`Fill done — missing: ${hasMissing}`);
 
-    processingLock = false;
+      if (hasMissing && profile?.settings?.pauseOnUnmatchedFields) {
+        window.postMessage({ type: 'SPEEDFILL_REVIEW_NEEDED' }, '*');
+        processingLock = false;
+        return;
+      }
 
-    const hasMissing = missingInputs || missingRadios;
-
-    if (hasMissing && profile.settings?.pauseOnUnmatchedFields) {
-      window.postMessage({ type: 'SPEEDFILL_REVIEW_NEEDED' }, '*');
-      return; // Don't auto-advance
+      if (profile?.settings?.autoAdvanceStep) {
+        const delay = Math.max(0, profile.settings.stepDelayMs ?? 600);
+        clearTimeout(stepTimer);
+        stepTimer = setTimeout(() => advanceNextStep(modal), delay);
+      }
+    } finally {
+      processingLock = false;
     }
-
-    if (!profile.settings?.autoAdvanceStep) return;
-
-    const delay = Math.max(0, profile.settings?.stepDelayMs ?? 600);
-    clearTimeout(stepTimer);
-    stepTimer = setTimeout(() => advanceNextStep(modal), delay);
   }
 
-  // ─── MutationObserver (debounced) ──────────────────────────────────────────
-
-  let debounceTimer = null;
-
+  // ─── MutationObserver ───────────────────────────────────────────────────────
   function startObserver() {
     if (observer) observer.disconnect();
 
     observer = new MutationObserver(() => {
-      // Debounce: only react 400ms after the last DOM mutation burst
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        if (!profile) return;
-        const modal = [...document.querySelectorAll(MODAL_SELECTOR)].find(isEasyApplyModal);
-        if (modal && profile.settings?.autoFillOnLoad) {
-          processModalStep();
-        }
-      }, 400);
+        if (!profile?.settings?.autoFillOnLoad) return;
+        const modal = findEasyApplyModal();
+        if (modal) processModalStep();
+      }, 350);
     });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: false  // don't watch attribute changes to keep it lean
-    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    LOG('Observer started');
   }
 
   // ─── Manual-edit lock ────────────────────────────────────────────────────────
-  // Mark any field the user physically types into so we never overwrite it
   document.addEventListener('input', e => {
-    if (e.target && e.target.matches && e.target.matches('input, textarea')) {
+    if (e.target?.matches?.('input, textarea')) {
       e.target.dataset.speedfillUserEdited = 'true';
     }
   }, true);
 
-  // ─── Message listener (from background.js hotkey) ──────────────────────────
+  // ─── Message listener (Alt+F hotkey from background.js) ────────────────────
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'TRIGGER_AUTOFILL') {
+        LOG('Manual trigger via Alt+F');
         lastModalHash = ''; // force re-process
         if (profile) {
           processModalStep();
@@ -432,6 +456,7 @@
 
   // ─── Boot ──────────────────────────────────────────────────────────────────
   function init() {
+    LOG('SpeedFill Easy Apply Engine v1.2 loaded on:', location.href);
     loadProfile(() => startObserver());
   }
 

@@ -129,24 +129,42 @@
   // ─── Job Card Processing ────────────────────────────────────────────────────
 
   function getJobCards() {
-    // Multiple LinkedIn DOM variants
-    return Array.from(document.querySelectorAll(
-      '.jobs-search-results-list__list-item, ' +
-      '.scaffold-layout__list-item, ' +
-      'li.jobs-search-results__list-item, ' +
-      'div[data-job-id]'
-    ));
+    // LinkedIn has multiple DOM variants — try each and merge unique results
+    const selectors = [
+      '.jobs-search-results-list__list-item',
+      '.scaffold-layout__list-item',
+      'li.jobs-search-results__list-item',
+      'div[data-job-id]',
+      'li[data-occludable-job-id]',
+      '.job-card-container'
+    ];
+    const seen = new Set();
+    const cards = [];
+    for (const sel of selectors) {
+      document.querySelectorAll(sel).forEach(el => {
+        if (!seen.has(el)) { seen.add(el); cards.push(el); }
+      });
+    }
+    return cards;
   }
 
   function isAlreadyApplied(card) {
+    // LinkedIn marks applied jobs with a green checkmark li or 'Applied X ago' text
+    const appliedIcon = card.querySelector(
+      '.job-card-container__footer-job-state, ' +
+      '[class*="applied"], ' +
+      'li.job-card-container__footer-item--highlighted'
+    );
+    if (appliedIcon) return true;
+
     const text = card.textContent || '';
-    return /applied/i.test(text) && !/easy apply/i.test(text);
+    // Check for 'Applied' but avoid false positive on 'Easy Apply'
+    return /\bApplied\b/i.test(text) && !/easy apply/i.test(card.textContent.replace(/applied/gi, ''));
   }
 
   function hasEasyApplyBadge(card) {
-    const text = card.textContent || '';
-    return /easy apply/i.test(text) ||
-           card.querySelector('[aria-label*="Easy Apply"], .job-card-container__easy-apply-label') !== null;
+    if (card.querySelector('[aria-label*="Easy Apply"], [class*="easy-apply"], .job-card-container__easy-apply-label')) return true;
+    return /easy apply/i.test(card.textContent);
   }
 
   function processCard() {
@@ -203,25 +221,45 @@
   function tryClickEasyApply() {
     if (!isQueueActive) return;
 
-    // Look for the top-card Easy Apply button in the right detail pane
-    const btn = document.querySelector(
-      '.jobs-apply-button--top-card button[aria-label*="Easy Apply"], ' +
-      'button.jobs-s-apply button[aria-label*="Easy Apply"], ' +
-      '.jobs-apply-button button[aria-label*="Easy Apply"], ' +
-      'button[aria-label*="Easy Apply"]:not([data-job-apply-external])'
-    );
+    // Multiple selector strategies for the Easy Apply button
+    const btnSelectors = [
+      'button[aria-label*="Easy Apply"]',
+      '.jobs-apply-button button',
+      '.jobs-s-apply button',
+      'button.jobs-apply-button',
+      '.jobs-apply-button--top-card button'
+    ];
 
-    if (btn && !btn.disabled) {
+    let btn = null;
+    for (const sel of btnSelectors) {
+      const found = document.querySelector(sel);
+      if (found && !found.disabled) {
+        // Make sure it's the Easy Apply variant (not an external apply button)
+        const label = (found.getAttribute('aria-label') || found.textContent || '').toLowerCase();
+        if (label.includes('easy apply') || found.closest('.jobs-apply-button--top-card')) {
+          btn = found;
+          break;
+        }
+      }
+    }
+
+    // Last resort: find any button whose text is exactly 'Easy Apply'
+    if (!btn) {
+      btn = Array.from(document.querySelectorAll('button')).find(b =>
+        !b.disabled && b.textContent.trim().toLowerCase() === 'easy apply'
+      );
+    }
+
+    if (btn) {
       const jobTitle = document.querySelector(
-        '.jobs-unified-top-card__job-title, .t-24.t-bold'
+        '.jobs-unified-top-card__job-title, .t-24.t-bold, h1.t-24'
       )?.textContent?.trim() || '';
       setJobTitle(`🚀 Applying: ${jobTitle}`);
       setBadge('Applying…', 'speedfill-badge-active');
       btn.click();
-      // linkedin_easy_apply.js takes over from here
-      // We wait for SPEEDFILL_APPLICATION_SUBMITTED message
+      // linkedin_easy_apply.js takes over the modal
     } else {
-      // Not Easy Apply or already applied from detail pane
+      // Not Easy Apply — skip
       skippedCount++;
       updateStats();
       setBadge(`Skipped (${skippedCount})`, 'speedfill-badge-idle');

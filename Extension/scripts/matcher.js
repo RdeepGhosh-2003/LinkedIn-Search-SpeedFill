@@ -137,21 +137,42 @@ window.SpeedFillMatcher = (function () {
       if (legend) parts.push(legend.textContent);
     }
 
-    // 4. LinkedIn Easy Apply form element containers
+    // 4. LinkedIn Easy Apply form element containers (multiple UI generations)
     const containers = [
       '.jobs-easy-apply-form-element',
       '.fb-dash-form-element',
       '.fb-form-element',
       '[data-test-form-element]',
-      '.artdeco-text-input--container'
+      '.artdeco-text-input--container',
+      '[class*="form-element"]',
+      '[class*="FormElement"]',
+      '[class*="form-component"]'
     ];
     const container = el.closest(containers.join(', '));
     if (container) {
       const header = container.querySelector(
         'label, legend, .fb-form-element-label, .artdeco-text-input--label, ' +
-        '.jobs-easy-apply-form-element__label, span.t-14'
+        '.jobs-easy-apply-form-element__label, span.t-14, [class*="label"]'
       );
       if (header) parts.push(header.textContent);
+    }
+
+    // 5. Walk up through host elements if inside a shadow root
+    let node = el;
+    for (let i = 0; i < 6; i++) {
+      if (!node.parentElement && node.parentNode instanceof ShadowRoot) {
+        const host = node.parentNode.host;
+        const hostLabel = host.getAttribute('label') ||
+                          host.getAttribute('data-label') ||
+                          host.getAttribute('data-field-name') ||
+                          host.getAttribute('name') ||
+                          host.getAttribute('componentkey') ||
+                          host.getAttribute('data-component-type') || '';
+        if (hostLabel) parts.push(hostLabel);
+        node = host;
+      } else {
+        break;
+      }
     }
 
     // 5. aria-labelledby
